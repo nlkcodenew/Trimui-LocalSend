@@ -21,6 +21,10 @@ case "$0" in
     ;;
 esac
 APP="$(pwd)"
+# Đảm bảo binary tìm thấy libcrypto/libssl đi kèm trong lib/ ngay cả khi
+# script được chạy tay ngoài launch.sh (khi chạy từ launch.sh thì biến này
+# đã được export sẵn và subshell OTA kế thừa).
+export LD_LIBRARY_PATH="$APP/lib:/usr/trimui/lib:/usr/lib64:/usr/lib:/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 VERSION_FILE="$APP/VERSION"
 CUR="$(cat "$VERSION_FILE" 2>/dev/null | tr -d ' \r\n')"
 [ -n "$CUR" ] || CUR="0.0.0"

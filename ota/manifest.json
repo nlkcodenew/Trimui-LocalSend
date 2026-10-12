@@ -37,11 +37,11 @@
     },
     {
       "path": "ota-update.sh",
-      "sha256": "8df2bc5b2bd59502c4fb61efd4c6649e842bf726d3978bd4c7fda49f5dc0a2d6",
-      "size": 9088
+      "sha256": "f1d9f5ae922e541114080de88cfebed42f07e77ad148e5c06b1463d49fddd088",
+      "size": 9435
     }
   ],
   "kid": "ls1",
-  "signature": "yezJWkuxOWGGCKEp3TdV8W0kv0bapjO8Lt5dk08s3LP-5tmPS8pbEPukorB_hcbB2Y0HoBehIeXlNKSkDjM2AA",
+  "signature": "xDhcCPZOseXbhUTKZhGqdgsQ_rhBcIGM4j6TYrUqbV3giEmDTt8l8UGo5R-9LYbCpxIgBS3HAbIXzEIxqZaVBw",
   "version": "0.3.0"
 }
