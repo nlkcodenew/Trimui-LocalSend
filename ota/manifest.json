@@ -26,12 +26,22 @@
       "size": 1284
     },
     {
+      "path": "lib/libcrypto.so.1.1",
+      "sha256": "e40f8d5a4c1ca2c2fdfe0fe4c98f9d7f45cf200b3355a93b78b71f19a4cd25b1",
+      "size": 2875800
+    },
+    {
+      "path": "lib/libssl.so.1.1",
+      "sha256": "a8e40386762686f58a9dfb5115b8924050eff51fcb3393629d4f04ea50ec60c2",
+      "size": 630024
+    },
+    {
       "path": "ota-update.sh",
       "sha256": "8df2bc5b2bd59502c4fb61efd4c6649e842bf726d3978bd4c7fda49f5dc0a2d6",
       "size": 9088
     }
   ],
   "kid": "ls1",
-  "signature": "8IWwsz4AtilWOBuEamPgfTaA_P33a3fDhQXTtYy4BG873cfB1kPNEU-nFpthWZG1I-GIMIRGBooHGyYU6p0jDA",
+  "signature": "yezJWkuxOWGGCKEp3TdV8W0kv0bapjO8Lt5dk08s3LP-5tmPS8pbEPukorB_hcbB2Y0HoBehIeXlNKSkDjM2AA",
   "version": "0.3.0"
 }
