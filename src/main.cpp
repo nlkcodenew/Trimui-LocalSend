@@ -21,10 +21,19 @@ using namespace RomCloud;
 
 namespace {
 
-constexpr int kWidth = 1024;
-constexpr int kHeight = 768;
-constexpr int kHeaderHeight = 64;
-constexpr int kFooterHeight = 53;
+constexpr int kBaseW = 1024;
+constexpr int kBaseH = 768;
+
+// Kích thước màn hình thực tế — detect lúc chạy (theo cách chiaki-ng):
+// TrimUI Brick Pro = 1024x768 (4:3), TrimUI Smart Pro S = 1280x720 (16:9).
+// Mọi tọa độ UI được viết theo hệ cơ sở 1024x768 rồi scale qua X()/Y().
+int scrW = kBaseW;
+int scrH = kBaseH;
+
+inline int X(int x) { return x * scrW / kBaseW; }
+inline int Y(int y) { return y * scrH / kBaseH; }
+inline int headerH() { return Y(64); }
+inline int footerH() { return Y(53); }
 
 enum class Screen { Home, Browser, Transfers };
 
@@ -117,13 +126,13 @@ void drawText(const std::string &text, int x, int y, SDL_Color value,
 }
 
 void drawFooter(const std::string &left, const std::string &right) {
-  const int top = kHeight - kFooterHeight;
-  fillRect(0, top, kWidth, kFooterHeight, color(20, 24, 31));
-  fillRect(0, top, kWidth, 1, color(55, 64, 78));
-  drawText(left, 28, top + 15, color(220, 225, 232), fontSmall, 660);
+  const int top = scrH - footerH();
+  fillRect(0, top, scrW, footerH(), color(20, 24, 31));
+  fillRect(0, top, scrW, std::max(1, Y(1)), color(55, 64, 78));
+  drawText(left, X(28), top + Y(15), color(220, 225, 232), fontSmall, X(660));
   int width = 0;
   TTF_SizeUTF8(fontSmall, right.c_str(), &width, nullptr);
-  drawText(right, kWidth - width - 28, top + 15, color(220, 225, 232), fontSmall);
+  drawText(right, scrW - width - X(28), top + Y(15), color(220, 225, 232), fontSmall);
 }
 
 std::string parentPath(const std::string &path) {
@@ -229,61 +238,67 @@ InputState pollInput() {
 }
 
 void drawHeader() {
-  fillRect(0, 0, kWidth, kHeaderHeight, color(22, 27, 35));
-  drawText("Trimui-LocalSend", 28, 17, color(246, 248, 252));
+  fillRect(0, 0, scrW, headerH(), color(22, 27, 35));
+  drawText("Trimui-LocalSend", X(28), Y(17), color(246, 248, 252));
   const auto &manager = LocalSendManager::instance();
   std::string status = manager.alias() + "  |  " + manager.ownIp();
   int width = 0;
   TTF_SizeUTF8(fontSmall, status.c_str(), &width, nullptr);
-  drawText(status, kWidth - width - 28, 22, color(145, 190, 255), fontSmall);
+  drawText(status, scrW - width - X(28), Y(22), color(145, 190, 255), fontSmall);
 }
 
 void drawHome() {
   const auto devices = LocalSendManager::instance().knownDevices();
   selectedDevice = std::min(selectedDevice, std::max(0, static_cast<int>(devices.size()) - 1));
-  drawText("Thiết bị trong mạng", 40, 88, color(225, 230, 238));
+  drawText("Thiết bị trong mạng", X(40), Y(88), color(225, 230, 238));
   if (devices.empty()) {
-    fillRect(40, 132, 944, 104, color(30, 36, 46));
-    drawText("Chưa tìm thấy thiết bị LocalSend", 68, 154, color(242, 244, 248));
-    drawText("Bật LocalSend trên máy khác và nhấn Y để quét lại.", 68, 194,
+    fillRect(X(40), Y(132), X(944), Y(104), color(30, 36, 46));
+    drawText("Chưa tìm thấy thiết bị LocalSend", X(68), Y(154), color(242, 244, 248));
+    drawText("Bật LocalSend trên máy khác và nhấn Y để quét lại.", X(68), Y(194),
              color(150, 160, 176), fontSmall);
   } else {
-    int y = 132;
-    for (int index = 0; index < static_cast<int>(devices.size()) && index < 7; ++index) {
+    // Số dòng vừa với chiều cao thực tế (768p: 7 dòng, 720p: 8 dòng)
+    int maxRows = (scrH - Y(132) - footerH() - Y(16)) / Y(76);
+    if (maxRows < 1) maxRows = 1;
+    if (maxRows > 12) maxRows = 12;
+    int y = Y(132);
+    for (int index = 0; index < static_cast<int>(devices.size()) && index < maxRows; ++index) {
       const bool selected = index == selectedDevice;
-      fillRect(40, y, 944, 68, selected ? color(44, 91, 150) : color(30, 36, 46));
-      drawText(devices[index].alias, 64, y + 10, color(247, 249, 252), font, 580);
+      fillRect(X(40), y, X(944), Y(68), selected ? color(44, 91, 150) : color(30, 36, 46));
+      drawText(devices[index].alias, X(64), y + Y(10), color(247, 249, 252), font, X(580));
       const int64_t ageSec =
           (LsUtil::nowMs() - devices[index].lastSeenMs) / 1000;
       drawText(devices[index].deviceModel + "  " + devices[index].ip +
                    "  * " + std::to_string(ageSec) + "s truoc",
-               64, y + 39, color(177, 189, 206), fontSmall, 820);
-      y += 76;
+               X(64), y + Y(39), color(177, 189, 206), fontSmall, X(820));
+      y += Y(76);
     }
   }
   drawFooter("D-Pad Chọn   X Gửi file   Y Quét lại", "START Tiến trình   B Thoát");
 }
 
 void drawBrowser() {
-  drawText("Chọn file để gửi", 40, 82, color(225, 230, 238));
-  drawText(browserPath, 40, 116, color(145, 190, 255), fontSmall, 930);
-  const int visible = 10;
+  drawText("Chọn file để gửi", X(40), Y(82), color(225, 230, 238));
+  drawText(browserPath, X(40), Y(116), color(145, 190, 255), fontSmall, X(930));
+  int visible = (scrH - Y(150) - footerH() - Y(10)) / Y(54);
+  if (visible < 4) visible = 4;
+  if (visible > 16) visible = 16;
   if (selectedEntry < browserScroll) browserScroll = selectedEntry;
   if (selectedEntry >= browserScroll + visible) browserScroll = selectedEntry - visible + 1;
-  int y = 150;
+  int y = Y(150);
   for (int row = 0; row < visible; ++row) {
     const int index = browserScroll + row;
     if (index >= static_cast<int>(browserEntries.size())) break;
     const bool selected = index == selectedEntry;
-    fillRect(40, y, 944, 49, selected ? color(44, 91, 150) : color(30, 36, 46));
+    fillRect(X(40), y, X(944), Y(49), selected ? color(44, 91, 150) : color(30, 36, 46));
     const auto &entry = browserEntries[index];
-    drawText(entry.directory ? "[THƯ MỤC]" : "FILE", 58, y + 13,
+    drawText(entry.directory ? "[THƯ MỤC]" : "FILE", X(58), y + Y(13),
              entry.directory ? color(112, 205, 255) : color(139, 222, 174), fontSmall);
-    drawText(entry.name, 190, y + 10, color(246, 248, 252), font, 620);
+    drawText(entry.name, X(190), y + Y(10), color(246, 248, 252), font, X(620));
     if (!entry.directory) {
-      drawText(LsUtil::humanSize(entry.size), 850, y + 14, color(177, 189, 206), fontSmall);
+      drawText(LsUtil::humanSize(entry.size), X(850), y + Y(14), color(177, 189, 206), fontSmall);
     }
-    y += 54;
+    y += Y(54);
   }
   drawFooter("A Mở/Gửi   D-Pad Chọn", "B Quay lại");
 }
@@ -312,36 +327,37 @@ std::string receiveStateName(LsUploadRequest::State state) {
 }
 
 void drawTransfers() {
-  drawText("Tiến trình truyền file", 40, 84, color(225, 230, 238));
+  drawText("Tiến trình truyền file", X(40), Y(84), color(225, 230, 238));
   auto sends = LocalSendManager::instance().sendProgresses();
   auto receives = LocalSendManager::instance().receiveProgresses();
-  int y = 132;
+  const int bottomLimit = scrH - footerH() - Y(60);
+  int y = Y(132);
   if (sends.empty() && receives.empty()) {
-    drawText("Chưa có tác vụ.", 50, y, color(160, 170, 184));
+    drawText("Chưa có tác vụ.", X(50), y, color(160, 170, 184));
   }
   for (const auto &item : sends) {
-    if (y > 650) break;
-    fillRect(40, y, 944, 78, color(30, 36, 46));
-    drawText("GỬI", 58, y + 12, color(112, 205, 255), fontSmall);
-    drawText(item.fileName, 130, y + 8, color(246, 248, 252), font, 580);
-    drawText(sendStateName(item.state), 760, y + 12, color(139, 222, 174), fontSmall);
+    if (y > bottomLimit) break;
+    fillRect(X(40), y, X(944), Y(78), color(30, 36, 46));
+    drawText("GỬI", X(58), y + Y(12), color(112, 205, 255), fontSmall);
+    drawText(item.fileName, X(130), y + Y(8), color(246, 248, 252), font, X(580));
+    drawText(sendStateName(item.state), X(760), y + Y(12), color(139, 222, 174), fontSmall);
     const uint64_t total = std::max<uint64_t>(1, item.totalBytes);
-    const int bar = static_cast<int>(760.0 * item.sentBytes / total);
-    fillRect(130, y + 47, 760, 10, color(48, 57, 70));
-    fillRect(130, y + 47, std::min(760, bar), 10, color(72, 156, 255));
-    y += 86;
+    const int bar = static_cast<int>(X(760) * (double)item.sentBytes / (double)total);
+    fillRect(X(130), y + Y(47), X(760), Y(10), color(48, 57, 70));
+    fillRect(X(130), y + Y(47), std::min(X(760), bar), Y(10), color(72, 156, 255));
+    y += Y(86);
   }
   for (const auto &item : receives) {
-    if (y > 650) break;
-    fillRect(40, y, 944, 78, color(30, 36, 46));
-    drawText("NHẬN", 58, y + 12, color(139, 222, 174), fontSmall);
-    drawText(item.file.fileName, 130, y + 8, color(246, 248, 252), font, 580);
-    drawText(receiveStateName(item.state), 760, y + 12, color(139, 222, 174), fontSmall);
+    if (y > bottomLimit) break;
+    fillRect(X(40), y, X(944), Y(78), color(30, 36, 46));
+    drawText("NHẬN", X(58), y + Y(12), color(139, 222, 174), fontSmall);
+    drawText(item.file.fileName, X(130), y + Y(8), color(246, 248, 252), font, X(580));
+    drawText(receiveStateName(item.state), X(760), y + Y(12), color(139, 222, 174), fontSmall);
     const uint64_t total = std::max<uint64_t>(1, item.file.size);
-    const int bar = static_cast<int>(760.0 * item.receivedBytes / total);
-    fillRect(130, y + 47, 760, 10, color(48, 57, 70));
-    fillRect(130, y + 47, std::min(760, bar), 10, color(65, 196, 131));
-    y += 86;
+    const int bar = static_cast<int>(X(760) * (double)item.receivedBytes / (double)total);
+    fillRect(X(130), y + Y(47), X(760), Y(10), color(48, 57, 70));
+    fillRect(X(130), y + Y(47), std::min(X(760), bar), Y(10), color(65, 196, 131));
+    y += Y(86);
   }
   drawFooter("X Xóa tác vụ đã xong", "B Quay lại");
 }
@@ -353,24 +369,30 @@ void drawIncoming() {
     if (incomingRequests.empty()) return;
     request = incomingRequests.front();
   }
-  fillRect(0, 0, kWidth, kHeight, color(0, 0, 0, 160));
-  fillRect(122, 154, 780, 420, color(34, 40, 51));
-  fillRect(122, 154, 780, 5, color(72, 156, 255));
-  drawText("Yêu cầu nhận file", 166, 190, color(247, 249, 252));
-  drawText("Từ: " + request.fromAlias + " (" + request.fromIp + ")", 166, 242,
-           color(177, 189, 206), fontSmall, 690);
-  drawText(request.file.fileName, 166, 292, color(247, 249, 252), font, 690);
-  drawText("Kích thước: " + LsUtil::humanSize(request.file.size), 166, 338,
+  // Hộp thoại căn giữa màn hình — vừa cả 4:3 (1024x768) lẫn 16:9 (1280x720)
+  const int boxW = X(780);
+  const int boxH = Y(420);
+  const int bx = (scrW - boxW) / 2;
+  const int by = (scrH - boxH) / 2;
+  const int tx = bx + X(44);
+  fillRect(0, 0, scrW, scrH, color(0, 0, 0, 160));
+  fillRect(bx, by, boxW, boxH, color(34, 40, 51));
+  fillRect(bx, by, boxW, std::max(1, Y(5)), color(72, 156, 255));
+  drawText("Yêu cầu nhận file", tx, by + Y(36), color(247, 249, 252));
+  drawText("Từ: " + request.fromAlias + " (" + request.fromIp + ")", tx, by + Y(88),
+           color(177, 189, 206), fontSmall, X(690));
+  drawText(request.file.fileName, tx, by + Y(138), color(247, 249, 252), font, X(690));
+  drawText("Kích thước: " + LsUtil::humanSize(request.file.size), tx, by + Y(184),
            color(177, 189, 206), fontSmall);
-  drawText("Lưu vào: /mnt/SDCARD/Download/LocalSend", 166, 382,
+  drawText("Lưu vào: /mnt/SDCARD/Download/LocalSend", tx, by + Y(228),
            color(145, 190, 255), fontSmall);
-  drawText("A  Chấp nhận", 212, 498, color(139, 222, 174));
-  drawText("B  Từ chối", 602, 498, color(255, 139, 139));
+  drawText("A  Chấp nhận", bx + X(90), by + Y(344), color(139, 222, 174));
+  drawText("B  Từ chối", bx + X(480), by + Y(344), color(255, 139, 139));
 }
 
 void render() {
   SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-  fillRect(0, 0, kWidth, kHeight, color(15, 18, 24));
+  fillRect(0, 0, scrW, scrH, color(15, 18, 24));
   drawHeader();
   if (screen == Screen::Home) drawHome();
   else if (screen == Screen::Browser) drawBrowser();
@@ -383,17 +405,32 @@ bool init() {
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) != 0) {
     return false;
   }
+  // Detect độ phân giải thực của máy (chiaki-ng style). Brick Pro = 1024x768,
+  // Smart Pro S = 1280x720. Fallback 1024x768 nếu không đọc được.
+  scrW = kBaseW;
+  scrH = kBaseH;
+  SDL_DisplayMode dm;
+  if (SDL_GetCurrentDisplayMode(0, &dm) == 0 && dm.w > 0 && dm.h > 0) {
+    scrW = dm.w;
+    scrH = dm.h;
+  }
+  if (scrW < 800)
+    scrW = kBaseW;
+  if (scrH < 600)
+    scrH = kBaseH;
+  Logger::info("UI: screen detected " + std::to_string(scrW) + "x" +
+               std::to_string(scrH));
   if (TTF_Init() != 0) return false;
   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
   window = SDL_CreateWindow("Trimui-LocalSend", SDL_WINDOWPOS_CENTERED,
-                            SDL_WINDOWPOS_CENTERED, kWidth, kHeight,
+                            SDL_WINDOWPOS_CENTERED, scrW, scrH,
                             SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP);
   if (!window) return false;
   renderer = SDL_CreateRenderer(window, -1,
                                 SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
   if (!renderer) renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
   if (!renderer) return false;
-  SDL_RenderSetLogicalSize(renderer, kWidth, kHeight);
+  SDL_RenderSetLogicalSize(renderer, scrW, scrH);
   const std::string fontPath = appDirectory + "/assets/NotoSans-Regular.ttf";
   font = TTF_OpenFont(fontPath.c_str(), 25);
   fontSmall = TTF_OpenFont(fontPath.c_str(), 18);

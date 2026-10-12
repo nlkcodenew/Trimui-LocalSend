@@ -4,7 +4,7 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 VERSION="$(tr -d ' \r\n' < "$ROOT/VERSION")"
 STAGE="$ROOT/dist/staging"
-OUTPUT="$ROOT/dist/Trimui-LocalSend-stock-v$VERSION.zip"
+OUTPUT="$ROOT/dist/Trimui-LocalSend-v$VERSION.zip"
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/Apps/Trimui-LocalSend"
