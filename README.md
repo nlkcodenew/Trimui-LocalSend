@@ -48,6 +48,37 @@ Khởi động lại MainUI hoặc thiết bị, rồi mở `Trimui-LocalSend` t
 Có thể tải bản mới nhất tại mục Releases của
 https://github.com/nlkcodenew/Trimui-LocalSend.
 
+## Cập nhật tự động (OTA)
+
+Từ v0.3.0, app tự cập nhật **im lặng** theo mô hình của LottoForecast-Pro —
+người dùng không cần biết, không cần bấm gì:
+
+- `launch.sh` chạy `ota-update.sh --apply` nền: 30 giây sau khi mở app kiểm
+  tra 1 lần, sau đó mỗi 10 phút kiểm tra lại trong khi app còn mở.
+- Script tải `ota/manifest.json` từ GitHub (raw.githubusercontent, dự phòng
+  jsdelivr), **binary verify chữ ký Ed25519 của manifest trước** khi tin bất
+  kỳ nội dung nào (`--verify-manifest`, dùng OpenSSL; private key ký release
+  giữ offline trên máy dev, binary chỉ nhúng public key).
+- Từng file được tải về và verify SHA-256 trước khi chép; chép atomic
+  (`.ota-new` → rename); không bao giờ đụng tới `data/` (alias, fingerprint),
+  `*.log`, `.ota-status`.
+- Bản mới có hiệu lực ở lần mở app tiếp theo — không restart giữa chừng để
+  không giết transfer đang chạy.
+- Tắt hẳn OTA: đặt `TRIMUI_LS_NO_OTA=1`.
+
+Quy trình phát hành bản mới trên máy dev:
+
+```sh
+# 1. build + đóng gói như thường
+./build.sh && ./package.sh
+# 2. chép file release vào ota/files/vX.Y.Z/
+# 3. ký manifest
+python3 tools/make_manifest.py --version X.Y.Z --files ota/files/vX.Y.Z \
+    --key ~/.config/trimui-localsend/ota/ls1.key --kid ls1 \
+    --out ota/manifest.json
+# 4. commit + push (kèm GitHub release chứa zip như mọi khi)
+```
+
 ## Tương thích
 
 Ứng dụng triển khai LocalSend protocol v2 qua HTTP trên cổng `53317`. Thiết bị

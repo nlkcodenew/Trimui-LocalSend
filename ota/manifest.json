@@ -1,0 +1,37 @@
+{
+  "files": [
+    {
+      "path": "assets/NotoSans-Regular.ttf",
+      "sha256": "371924e7480d3d01807fdc1bd30442d0a6651e6b5ea546482f5883d613cf0419",
+      "size": 201644
+    },
+    {
+      "path": "bin/trimui-localsend",
+      "sha256": "5b5e392da8ba2e3be093cc4ac3b1438f1e0d917b897cc71460e05845cd38feb4",
+      "size": 232168
+    },
+    {
+      "path": "config.json",
+      "sha256": "abcb94e2a4207a24947acecb07bc1edf4a5678b8b57c629698a84f9538499353",
+      "size": 177
+    },
+    {
+      "path": "icon.png",
+      "sha256": "0e2b5d1a775245c2d37fd6a9cdbdecfbbdbbc667071cb3e4de40a16436b203da",
+      "size": 6804
+    },
+    {
+      "path": "launch.sh",
+      "sha256": "02c4744434a94f340354c06d46e4a48eb28ccedc2f187d3492046ed0bc731c9b",
+      "size": 1284
+    },
+    {
+      "path": "ota-update.sh",
+      "sha256": "8df2bc5b2bd59502c4fb61efd4c6649e842bf726d3978bd4c7fda49f5dc0a2d6",
+      "size": 9088
+    }
+  ],
+  "kid": "ls1",
+  "signature": "8IWwsz4AtilWOBuEamPgfTaA_P33a3fDhQXTtYy4BG873cfB1kPNEU-nFpthWZG1I-GIMIRGBooHGyYU6p0jDA",
+  "version": "0.3.0"
+}

@@ -1,6 +1,7 @@
 #include "AppConfig.h"
 #include "LocalSendManager.h"
 #include "Logger.h"
+#include "OtaVerify.h"
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
@@ -460,6 +461,17 @@ void shutdownApp() {
 } // namespace
 
 int main(int argc, char **argv) {
+  // Chế độ CLI cho OTA (không cần SDL): verify manifest ký Ed25519.
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--verify-manifest" && i + 1 < argc) {
+      return OtaVerifyManifest(argv[i + 1]) ? 0 : 1;
+    }
+    if (arg == "--version") {
+      printf("%s\n", APP_VERSION);
+      return 0;
+    }
+  }
   if (argc > 0) {
     std::string executable = argv[0];
     const size_t slash = executable.find_last_of('/');
