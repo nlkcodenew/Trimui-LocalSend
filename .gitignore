@@ -1,0 +1,14 @@
+# Build output
+files/bin/
+dist/
+# Runtime artifacts (on-device)
+data/
+localsend.log
+*.log
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
