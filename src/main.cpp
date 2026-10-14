@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <vector>
 #include <set>
+#include <map>
 
 using namespace RomCloud;
 
@@ -423,22 +424,54 @@ void drawTransfers() {
     fillRect(X(130), y + Y(47), std::min(X(760), bar), Y(10), color(72, 156, 255));
     y += Y(86);
   }
-  for (const auto &item : receives) {
-    if (y > bottomLimit) break;
-    const bool showPath = !item.savedPath.empty();
-    const int rh = showPath ? Y(100) : Y(78);
-    fillRect(X(40), y, X(944), rh, color(30, 36, 46));
-    drawText("NHẬN", X(58), y + Y(12), color(139, 222, 174), fontSmall);
-    drawText(item.file.fileName, X(130), y + Y(8), color(246, 248, 252), font, X(580));
-    if (showPath) {
-      drawText(item.savedPath, X(130), y + Y(52), color(145, 190, 255), fontSmall, X(700));
+  // Gộp các file cùng session thành 1 thanh duy nhất (giống bên gửi, kiểu AirDrop)
+  {
+    std::map<std::string, std::vector<const LsUploadRequest*>> bySession;
+    std::vector<std::string> order;
+    for (const auto &item : receives) {
+      if (bySession.find(item.sessionId) == bySession.end()) order.push_back(item.sessionId);
+      bySession[item.sessionId].push_back(&item);
     }
-    drawText(receiveStateName(item.state), X(760), y + Y(12), color(139, 222, 174), fontSmall);
-    const uint64_t total = std::max<uint64_t>(1, item.file.size);
-    const int bar = static_cast<int>(X(760) * (double)item.receivedBytes / (double)total);
-    fillRect(X(130), y + Y(47), X(760), Y(10), color(48, 57, 70));
-    fillRect(X(130), y + Y(47), std::min(X(760), bar), Y(10), color(65, 196, 131));
-    y += Y(86);
+    for (const auto &sid : order) {
+      if (y > bottomLimit) break;
+      const auto &group = bySession[sid];
+      uint64_t total = 0, received = 0;
+      std::string saveDir;
+      LsUploadRequest::State st = LsUploadRequest::DONE;
+      for (const auto *p : group) {
+        total += p->file.size;
+        received += p->receivedBytes;
+        if (p->state != LsUploadRequest::DONE) st = p->state;
+        if (!p->savedPath.empty() && saveDir.empty()) {
+          size_t pos = p->savedPath.find_last_of('/');
+          saveDir = (pos == std::string::npos) ? p->savedPath : p->savedPath.substr(0, pos);
+        }
+      }
+      std::string displayName;
+      if (group.size() > 1) {
+        std::string rel = group[0]->file.relativePath;
+        size_t slash = rel.find('/');
+        std::string folder = (slash == std::string::npos) ? "" : rel.substr(0, slash);
+        char buf[128];
+        if (!folder.empty()) snprintf(buf, sizeof(buf), "%s (%zu file)", folder.c_str(), group.size());
+        else snprintf(buf, sizeof(buf), "%zu file", group.size());
+        displayName = buf;
+      } else {
+        displayName = group[0]->file.fileName;
+      }
+      fillRect(X(40), y, X(944), Y(100), color(30, 36, 46));
+      drawText("NHẬN", X(58), y + Y(12), color(139, 222, 174), fontSmall);
+      drawText(displayName, X(130), y + Y(8), color(246, 248, 252), font, X(580));
+      drawText(receiveStateName(st), X(760), y + Y(12), color(139, 222, 174), fontSmall);
+      const uint64_t tmax = std::max<uint64_t>(1, total);
+      const int bar = static_cast<int>(X(760) * (double)received / (double)tmax);
+      fillRect(X(130), y + Y(47), X(760), Y(10), color(48, 57, 70));
+      fillRect(X(130), y + Y(47), std::min(X(760), bar), Y(10), color(65, 196, 131));
+      if (!saveDir.empty()) {
+        drawText(saveDir, X(130), y + Y(68), color(145, 190, 255), fontSmall, X(700));
+      }
+      y += Y(100) + Y(8);
+    }
   }
   drawFooter("X Xóa tác vụ đã xong", "B Quay lại");
 }
