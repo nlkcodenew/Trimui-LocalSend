@@ -103,6 +103,11 @@ public:
   std::string sendFileMetaAsync(const LsFileMeta &meta,
                                 const std::string &absPath,
                                 const LsDeviceInfo &target);
+  // Gửi nhiều file trong 1 session duy nhất (cho tính năng gửi thư mục).
+  // Mỗi phần tử: pair<meta, absPath>. Bên nhận chỉ hiện 1 dialog duy nhất.
+  std::string sendFilesAsync(const std::vector<std::pair<LsFileMeta, std::string>> &files,
+                             const std::string &folderName,
+                             const LsDeviceInfo &target);
 
   // Lấy progress các file đang/đã gửi (cho UI sender screen).
   std::vector<LsSendProgress> sendProgresses();

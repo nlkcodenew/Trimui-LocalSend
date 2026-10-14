@@ -2670,4 +2670,165 @@ void LocalSendManager::clearFinishedTasks() {
   }
 }
 
+
+// Gửi nhiều file trong 1 session duy nhất (cho tính năng gửi thư mục).
+// Bên nhận chỉ hiện 1 dialog duy nhất cho cả batch.
+std::string LocalSendManager::sendFilesAsync(
+    const std::vector<std::pair<LsFileMeta, std::string>> &files,
+    const std::string &folderName,
+    const LsDeviceInfo &target) {
+  if (!m_running || files.empty()) return "";
+
+  struct FileInfo {
+    LsFileMeta meta;
+    std::string absPath;
+    std::string fileId;
+  };
+  std::vector<FileInfo> infos;
+  infos.reserve(files.size());
+  uint64_t totalBytes = 0;
+  for (const auto &p : files) {
+    const std::string &absPath = p.second;
+    if (absPath.empty() || absPath[0] != '/' || !LsUtil::isPathSafe(absPath)) {
+      Logger::warn("LocalSend: sendFilesAsync unsafe path: " + absPath);
+      return "";
+    }
+    struct stat st{};
+    if (stat(absPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+      Logger::warn("LocalSend: sendFilesAsync stat failed: " + absPath);
+      return "";
+    }
+    FileInfo fi;
+    fi.meta = p.first;
+    fi.absPath = absPath;
+    fi.meta.fileName = LsUtil::basenameOf(absPath);
+    fi.meta.size = (uint64_t)st.st_size;
+    fi.fileId = LsUtil::makeUuid();
+    fi.meta.id = fi.fileId;
+    if (fi.meta.relativePath.empty()) {
+      const std::string prefix = "/mnt/SDCARD/";
+      if (absPath.compare(0, prefix.size(), prefix) == 0) {
+        std::string sub = absPath.substr(prefix.size());
+        auto slash = sub.find_last_of('/');
+        fi.meta.relativePath = (slash == std::string::npos) ? "" : sub.substr(0, slash + 1);
+      }
+    }
+    if (fi.meta.fileType.empty()) fi.meta.fileType = "application/octet-stream";
+    std::string sha = LsUtil::sha256OfFile(absPath);
+    if (!sha.empty()) fi.meta.sha256 = sha;
+    totalBytes += fi.meta.size;
+    infos.push_back(std::move(fi));
+  }
+
+  auto prog = std::make_shared<LsSendProgress>();
+  prog->sessionId = LsUtil::makeUuid();
+  prog->toAlias = target.alias;
+  prog->toIp = target.ip;
+  prog->fileName = folderName + " (" + std::to_string(infos.size()) + " file)";
+  prog->totalBytes = totalBytes;
+  prog->state = LsSendProgress::QUEUED;
+  {
+    std::lock_guard<std::mutex> lock(m_sendMutex);
+    if (m_sends.size() >= 16) m_sends.erase(m_sends.begin());
+    m_sends.push_back(prog);
+  }
+  const std::string tmpSid = prog->sessionId;
+  LsDeviceInfo targetCopy = target;
+
+  std::thread([this, infos = std::move(infos), targetCopy, prog, folderName, totalBytes]() mutable {
+    const LsDeviceInfo &target = targetCopy;
+    prog->state = LsSendProgress::NEGOTIATING;
+
+    std::ostringstream prep;
+    prep << "{";
+    prep << "\"info\":{";
+    prep << "\"alias\":\"" << LsJson::escape(m_selfAlias) << "\",";
+    prep << "\"version\":\"" << LocalSendProto::kVersion << "\",";
+    prep << "\"deviceModel\":\"TrimUI Brick Pro\",";
+    prep << "\"deviceType\":\"" << LocalSendProto::kDeviceType << "\",";
+    prep << "\"fingerprint\":\"" << m_selfFingerprint << "\",";
+    prep << "\"port\":" << LocalSendProto::kPort << ",";
+    prep << "\"protocol\":\"" << LocalSendProto::kProtocol << "\",";
+    prep << "\"download\":false";
+    prep << "},";
+    prep << "\"files\":{";
+    for (size_t i = 0; i < infos.size(); ++i) {
+      const auto &fi = infos[i];
+      prep << "\"" << fi.fileId << "\":{";
+      prep << "\"id\":\"" << fi.fileId << "\",";
+      prep << "\"fileName\":\"" << LsJson::escape(fi.meta.fileName) << "\",";
+      if (!fi.meta.relativePath.empty()) {
+        prep << "\"relativePath\":\"" << LsJson::escape(fi.meta.relativePath) << "\",";
+      }
+      prep << "\"size\":" << fi.meta.size << ",";
+      prep << "\"fileType\":\"" << LsJson::escape(fi.meta.fileType) << "\"";
+      if (!fi.meta.sha256.empty())
+        prep << ",\"sha256\":\"" << fi.meta.sha256 << "\"";
+      prep << "}";
+      if (i + 1 < infos.size()) prep << ",";
+    }
+    prep << "}}";
+
+    std::string respBody;
+    if (!httpPostJson(target.protocol, target.ip, target.port,
+                      "/api/localsend/v2/prepare-upload",
+                      prep.str(), respBody, 60)) {
+      prog->state = LsSendProgress::FAILED;
+      prog->errorMessage = "Người nhận từ chối / Hủy";
+      return;
+    }
+
+    std::string sessionId;
+    LsJson::getString(respBody, "sessionId", sessionId);
+    if (sessionId.empty()) {
+      prog->state = LsSendProgress::FAILED;
+      prog->errorMessage = "Người nhận từ chối";
+      return;
+    }
+    prog->sessionId = sessionId;
+
+    std::string filesObj;
+    std::map<std::string, std::string> tokens;
+    if (LsJson::getObject(respBody, "files", filesObj)) {
+      for (const auto &fi : infos) {
+        std::string tok;
+        LsJson::getString(filesObj, fi.fileId, tok);
+        tokens[fi.fileId] = tok;
+      }
+    }
+
+    prog->state = LsSendProgress::UPLOADING;
+    uint64_t sentBytes = 0;
+    for (size_t i = 0; i < infos.size(); ++i) {
+      const auto &fi = infos[i];
+      prog->fileName = folderName + " (" + std::to_string(i + 1) + "/" +
+                       std::to_string(infos.size()) + ")";
+      std::string path = "/api/localsend/v2/upload?sessionId=" + sessionId +
+                         "&fileId=" + fi.fileId;
+      auto it = tokens.find(fi.fileId);
+      if (it != tokens.end() && !it->second.empty())
+        path += "&token=" + it->second;
+      LsSendProgress tmpProg;
+      tmpProg.totalBytes = fi.meta.size;
+      if (!httpPostBinary(target.protocol, target.ip, target.port, path,
+                          fi.absPath, tmpProg)) {
+        prog->state = LsSendProgress::FAILED;
+        prog->errorMessage = "upload failed: " + fi.meta.fileName;
+        Logger::warn("LocalSend: folder upload failed: " + fi.meta.fileName);
+        return;
+      }
+      sentBytes += fi.meta.size;
+      prog->sentBytes = sentBytes;
+    }
+
+    prog->state = LsSendProgress::DONE;
+    prog->fileName = folderName + " (" + std::to_string(infos.size()) + " file)";
+    Logger::info("LocalSend: sent folder " + folderName + " (" +
+                 std::to_string(infos.size()) + " files, " +
+                 LsUtil::humanSize(totalBytes) + ") to " + target.alias);
+  }).detach();
+
+  return tmpSid;
+}
+
 } // namespace RomCloud

@@ -633,12 +633,15 @@ int main(int argc, char **argv) {
           const auto devices = manager.knownDevices();
           if (!devices.empty() && selectedDevice < static_cast<int>(devices.size())
               && !folderConfirmFiles.empty()) {
-            // Gửi từng file kèm relativePath để bên nhận giữ cấu trúc thư mục
+            // Gửi cả thư mục trong 1 session duy nhất -> bên nhận chỉ hiện 1 dialog
+            std::vector<std::pair<LsFileMeta, std::string>> batch;
+            batch.reserve(folderConfirmFiles.size());
             for (const auto &ff : folderConfirmFiles) {
               LsFileMeta meta;
               meta.relativePath = ff.relativePath;
-              manager.sendFileMetaAsync(meta, ff.absPath, devices[selectedDevice]);
+              batch.emplace_back(meta, ff.absPath);
             }
+            manager.sendFilesAsync(batch, folderConfirmName, devices[selectedDevice]);
             showFolderConfirm = false;
             screen = Screen::Transfers;
           }
