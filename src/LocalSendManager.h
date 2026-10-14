@@ -16,7 +16,7 @@
 namespace RomCloud {
 
 struct LsPendingPrepare {
-  int clientFd = -1;
+  int clientFd = -1; // chỉ entry ĐẦU của 1 session giữ socket (tránh double-close)
   std::string sessionId;
   std::string fileId;
   std::string fileToken;
@@ -28,6 +28,9 @@ struct LsPendingPrepare {
   enum State { WAITING_USER = 0, APPROVED = 1, REJECTED = 2, TIMEOUT = 3 };
   State state = WAITING_USER;
   std::string savePath;
+  // Thư mục tương đối đã chuẩn hoá (giữ cấu trúc folder khi nhận nhiều file),
+  // "" = không có. Không bao giờ chứa "..".
+  std::string relDir;
 };
 
 class LocalSendManager {
@@ -70,7 +73,7 @@ public:
 
   // ----- Pending upload requests ----------------------------------
   // UI subscribe: callback khi có request mới → render modal A/B.
-  void setOnUserPrompt(std::function<void(const LsUploadRequest &)> cb);
+  void setOnUserPrompt(std::function<void(const LsIncomingSession &)> cb);
   // UI subscribe: callback khi có progress update (~mỗi 500ms).
   void setOnProgress(std::function<void(const LsUploadRequest &)> cb);
   // UI subscribe: callback khi upload xong/thất bại.
@@ -210,7 +213,7 @@ private:
 
   // UI callbacks
   std::mutex m_cbMutex;
-  std::function<void(const LsUploadRequest &)> m_onUserPrompt;
+  std::function<void(const LsIncomingSession &)> m_onUserPrompt;
   std::function<void(const LsUploadRequest &)> m_onProgress;
   std::function<void(const LsUploadRequest &)> m_onComplete;
 

@@ -98,6 +98,17 @@ struct LsUploadRequest {
     int64_t lastUpdateMs = 0;
 };
 
+// ----- 1 phiên nhận (gồm 1..N file chung 1 sessionId) ------------------
+// LocalSend v2: 1 prepare-upload có thể mang nhiều file; receiver trả token
+// cho từng file được chấp nhận, sender upload tuần tự từng file.
+struct LsIncomingSession {
+    std::string sessionId;
+    std::string fromAlias;
+    std::string fromIp;
+    std::vector<LsFileMeta> files;
+    uint64_t totalSize = 0;
+};
+
 // ----- 1 request gửi file (sender side) ------------------------------
 struct LsSendProgress {
     std::string sessionId;

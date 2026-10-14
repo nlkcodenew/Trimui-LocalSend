@@ -11,7 +11,7 @@ Google Drive, database ROM, OTA và media player.
 
 - Tự tìm thiết bị LocalSend trong cùng mạng Wi-Fi bằng UDP multicast/broadcast.
 - Gửi một file bất kỳ từ thẻ nhớ tới điện thoại hoặc máy tính.
-- Hiện hộp thoại chấp nhận/từ chối file đến.
+- Hiện hộp thoại chấp nhận/từ chối file đến (hỗ trợ nhiều file / cả thư mục trong 1 lần gửi).
 - Lưu file nhận vào `/mnt/SDCARD/Download/LocalSend` mà không tự giải nén hoặc di chuyển.
 - Hiện tiến trình gửi và nhận trực tiếp trên màn hình (tự thích ứng 1024x768 và 1280x720).
 

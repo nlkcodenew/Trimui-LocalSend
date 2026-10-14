@@ -72,7 +72,7 @@ int browserScroll = 0;
 std::string browserPath = "/mnt/SDCARD";
 std::vector<BrowserEntry> browserEntries;
 std::mutex incomingMutex;
-std::deque<LsUploadRequest> incomingRequests;
+std::deque<LsIncomingSession> incomingRequests;
 
 SDL_Color color(uint8_t red, uint8_t green, uint8_t blue, uint8_t alpha = 255) {
   return SDL_Color{red, green, blue, alpha};
@@ -364,11 +364,11 @@ void drawTransfers() {
 }
 
 void drawIncoming() {
-  LsUploadRequest request;
+  LsIncomingSession session;
   {
     std::lock_guard<std::mutex> lock(incomingMutex);
     if (incomingRequests.empty()) return;
-    request = incomingRequests.front();
+    session = incomingRequests.front();
   }
   // Hộp thoại căn giữa màn hình — vừa cả 4:3 (1024x768) lẫn 16:9 (1280x720)
   const int boxW = X(780);
@@ -380,13 +380,34 @@ void drawIncoming() {
   fillRect(bx, by, boxW, boxH, color(34, 40, 51));
   fillRect(bx, by, boxW, std::max(1, Y(5)), color(72, 156, 255));
   drawText("Yêu cầu nhận file", tx, by + Y(36), color(247, 249, 252));
-  drawText("Từ: " + request.fromAlias + " (" + request.fromIp + ")", tx, by + Y(88),
+  drawText("Từ: " + session.fromAlias + " (" + session.fromIp + ")", tx, by + Y(88),
            color(177, 189, 206), fontSmall, X(690));
-  drawText(request.file.fileName, tx, by + Y(138), color(247, 249, 252), font, X(690));
-  drawText("Kích thước: " + LsUtil::humanSize(request.file.size), tx, by + Y(184),
-           color(177, 189, 206), fontSmall);
-  drawText("Lưu vào: /mnt/SDCARD/Download/LocalSend", tx, by + Y(228),
-           color(145, 190, 255), fontSmall);
+  if (session.files.size() == 1) {
+    const auto &f = session.files[0];
+    drawText(f.fileName, tx, by + Y(138), color(247, 249, 252), font, X(690));
+    drawText("Kích thước: " + LsUtil::humanSize(f.size), tx, by + Y(184),
+             color(177, 189, 206), fontSmall);
+    drawText("Lưu vào: /mnt/SDCARD/Download/LocalSend", tx, by + Y(228),
+             color(145, 190, 255), fontSmall);
+  } else {
+    // Nhiều file / thư mục: hiện số lượng + tổng dung lượng + vài tên file
+    drawText(std::to_string(session.files.size()) + " files • Tổng: " +
+             LsUtil::humanSize(session.totalSize), tx, by + Y(138),
+             color(247, 249, 252), font, X(690));
+    const size_t showN = std::min<size_t>(session.files.size(), 3);
+    int y = by + Y(184);
+    for (size_t i = 0; i < showN; ++i) {
+      drawText("• " + session.files[i].fileName, tx, y,
+               color(177, 189, 206), fontSmall, X(690));
+      y += Y(34);
+    }
+    if (session.files.size() > showN) {
+      drawText("…và " + std::to_string(session.files.size() - showN) + " file nữa",
+               tx, y, color(177, 189, 206), fontSmall, X(690));
+    }
+    drawText("Lưu vào: /mnt/SDCARD/Download/LocalSend", tx, by + Y(300),
+             color(145, 190, 255), fontSmall);
+  }
   drawText("A  Chấp nhận", bx + X(90), by + Y(344), color(139, 222, 174));
   drawText("B  Từ chối", bx + X(480), by + Y(344), color(255, 139, 139));
 }
@@ -494,7 +515,7 @@ int main(int argc, char **argv) {
   }
 
   auto &manager = LocalSendManager::instance();
-  manager.setOnUserPrompt([](const LsUploadRequest &request) {
+  manager.setOnUserPrompt([](const LsIncomingSession &request) {
     std::lock_guard<std::mutex> lock(incomingMutex);
     incomingRequests.push_back(request);
   });
@@ -509,7 +530,7 @@ int main(int argc, char **argv) {
     // frame để đỡ lock mutex vô ích.
     const InputState input = pollInput();
     bool incomingVisible = false;
-    LsUploadRequest request;
+    LsIncomingSession request;
     {
       std::lock_guard<std::mutex> lock(incomingMutex);
       incomingVisible = !incomingRequests.empty();

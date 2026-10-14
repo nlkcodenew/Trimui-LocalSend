@@ -1226,147 +1226,217 @@ void LocalSendManager::handleRegister(int fd, const std::string &body) {
 }
 
 // =============================================================
+namespace {
+// Chuẩn hoá 1 đoạn path tương đối thành thư mục (không có '/' ở cuối,
+// "" nếu rỗng). Dùng để giữ cấu trúc folder khi nhận nhiều file.
+std::string normalizeRelDir(const std::string &s) {
+  const std::string root = "/mnt/SDCARD";
+  std::string in = s;
+  if (in.compare(0, root.size(), root) == 0)
+    in = in.substr(root.size());
+  std::string out, seg;
+  auto flushSeg = [&]() {
+    if (seg.empty() || seg == ".") {
+      seg.clear();
+      return;
+    }
+    if (seg == "..") {
+      seg.clear();
+      return;
+    } // bỏ traversal
+    if (!out.empty() && out.back() != '/')
+      out += '/';
+    out += seg;
+    seg.clear();
+  };
+  for (size_t i = 0; i <= in.size(); ++i) {
+    char c = (i < in.size()) ? in[i] : '/';
+    if (c == '/' || c == '\\')
+      flushSeg();
+    else if (c >= 32)
+      seg += c;
+  }
+  return out;
+}
+
+// Thư mục tương đối cần giữ lại của 1 file: từ relativePath của sender,
+// hoặc từ dirname của fileName nếu sender encode path vào fileName.
+std::string relDirOfFile(const LsFileMeta &fm) {
+  if (!fm.relativePath.empty())
+    return normalizeRelDir(fm.relativePath);
+  auto pos = fm.fileName.find('/');
+  if (pos != std::string::npos)
+    return normalizeRelDir(fm.fileName.substr(0, pos));
+  return "";
+}
+
+struct ParsedFile {
+  std::string fid;
+  LsFileMeta meta;
+};
+
+// Parse 1 entry {fid:{...}} trong object "files" -> LsFileMeta.
+// Trả về false nếu thiếu fileName (entry không hợp lệ -> bỏ qua).
+bool parsePrepareFileEntry(const std::string &fileObj, const std::string &fid,
+                           LsFileMeta &out) {
+  LsJson::getString(fileObj, "id", out.id);
+  if (out.id.empty())
+    out.id = fid;
+  LsJson::getString(fileObj, "fileName", out.fileName);
+  LsJson::getString(fileObj, "relativePath", out.relativePath);
+  LsJson::getString(fileObj, "fileType", out.fileType);
+  LsJson::getString(fileObj, "sha256", out.sha256);
+  LsJson::getString(fileObj, "preview", out.preview);
+  LsJson::getUint64(fileObj, "size", out.size);
+  // Mở rộng RomCloud: parse game metadata (sender gửi từ DB).
+  {
+    uint64_t u64 = 0;
+    if (LsJson::getUint64(fileObj, "gameId", u64))
+      out.gameId = (int64_t)u64;
+    if (LsJson::getUint64(fileObj, "systemId", u64))
+      out.systemId = (int)u64;
+  }
+  LsJson::getString(fileObj, "systemCode", out.systemCode);
+  LsJson::getString(fileObj, "systemName", out.systemName);
+  LsJson::getString(fileObj, "gameTitle", out.gameTitle);
+  LsJson::getString(fileObj, "coverPath", out.coverPath);
+  return !out.fileName.empty();
+}
+
+// Duyệt từng cặp "fid":{...} trong object files, gọi cb(fid, fileObjJson).
+template <typename Cb> void forEachFileEntry(const std::string &filesObj, Cb cb) {
+  size_t pos = 0;
+  while (pos < filesObj.size()) {
+    auto fidPos = filesObj.find('"', pos);
+    if (fidPos == std::string::npos)
+      break;
+    auto fidEnd = filesObj.find('"', fidPos + 1);
+    if (fidEnd == std::string::npos)
+      break;
+    std::string fid = filesObj.substr(fidPos + 1, fidEnd - fidPos - 1);
+    auto objStart = filesObj.find('{', fidEnd);
+    if (objStart == std::string::npos)
+      break;
+    int depth = 1;
+    bool inString = false;
+    size_t end = std::string::npos;
+    for (size_t i = objStart + 1; i < filesObj.size(); ++i) {
+      char c = filesObj[i];
+      if (c == '"' && (i == 0 || filesObj[i - 1] != '\\'))
+        inString = !inString;
+      if (inString)
+        continue;
+      if (c == '{')
+        ++depth;
+      else if (c == '}') {
+        if (--depth == 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    if (end == std::string::npos)
+      break;
+    cb(fid, filesObj.substr(objStart, end - objStart + 1));
+    pos = end + 1;
+  }
+}
+} // namespace
+
 // prepare-upload (spec §4.1)
+// =============================================================
+// prepare-upload (spec §4.1) — HỖ TRỢ NHIỀU FILE / THƯ MỤC
+// 1 request có thể mang N file chung 1 sessionId. Từng file được đăng ký
+// riêng, response trả token cho từng file được chấp nhận; sender upload
+// tuần tự từng file với token của nó.
 // =============================================================
 bool LocalSendManager::handlePrepareUpload(int fd, const std::string &body,
                                            const std::string &fromIp) {
-  LsUploadRequest req;
-  req.sessionId = LsUtil::makeUuid();
-  req.fromIp = fromIp;
-  req.lastUpdateMs = LsUtil::nowMs();
-
   // Parse "info":{...} → fromAlias
+  std::string fromAlias;
   std::string infoObj;
   if (LsJson::getObject(body, "info", infoObj)) {
-    LsJson::getString(infoObj, "alias", req.fromAlias);
+    LsJson::getString(infoObj, "alias", fromAlias);
   }
-  if (req.fromAlias.empty())
-    req.fromAlias = fromIp;
+  if (fromAlias.empty())
+    fromAlias = fromIp;
 
-  // Parse "files":{...} → lấy file đầu tiên (RomCloud hỗ trợ 1 file/lần)
+  // Parse "files":{...} → TẤT CẢ các file (trước đây chỉ lấy file đầu tiên)
   std::string filesObj;
   if (!LsJson::getObject(body, "files", filesObj)) {
     sendJsonResponse(fd, 400, "{\"error\":\"missing files\"}");
     return true;
   }
-
-  // Tìm "fid":{...} đầu tiên
-  auto fidPos = filesObj.find('"');
-  if (fidPos == std::string::npos) {
+  std::vector<ParsedFile> parsed;
+  forEachFileEntry(filesObj,
+                   [&](const std::string &fid, const std::string &fobj) {
+                     LsFileMeta fm;
+                     if (parsePrepareFileEntry(fobj, fid, fm))
+                       parsed.push_back(ParsedFile{fid, fm});
+                     else
+                       Logger::warn("LocalSend: skip file entry without "
+                                    "fileName (fid=" +
+                                    fid + ")");
+                   });
+  if (parsed.empty()) {
     sendJsonResponse(fd, 400, "{\"error\":\"empty files\"}");
     return true;
   }
-  auto fidEnd = filesObj.find('"', fidPos + 1);
-  if (fidEnd == std::string::npos) {
-    sendJsonResponse(fd, 400, "{\"error\":\"bad file id\"}");
-    return true;
-  }
-  req.fileId = filesObj.substr(fidPos + 1, fidEnd - fidPos - 1);
 
-  // Tìm {...} ngay sau fid
-  auto fileObjStart = filesObj.find('{', fidEnd);
-  if (fileObjStart == std::string::npos) {
-    sendJsonResponse(fd, 400, "{\"error\":\"no file body\"}");
-    return true;
-  }
-  int depth = 1;
-  size_t fileObjPos = fileObjStart + 1;
-  bool inString = false;
-  size_t fileObjEnd = std::string::npos;
-  for (; fileObjPos < filesObj.size(); ++fileObjPos) {
-    char c = filesObj[fileObjPos];
-    if (c == '"' && (fileObjPos == 0 || filesObj[fileObjPos - 1] != '\\'))
-      inString = !inString;
-    if (inString)
+  const std::string sessionId = LsUtil::makeUuid();
+  std::vector<LsPendingPrepare> batch;
+  batch.reserve(parsed.size());
+  uint64_t totalSize = 0;
+  for (size_t i = 0; i < parsed.size(); ++i) {
+    const LsFileMeta &fm = parsed[i].meta;
+    // Resolve target path (3-tier) — "" = unsafe -> bỏ qua file này
+    std::string target = resolveTargetPath(fm);
+    if (target.empty()) {
+      Logger::warn("LocalSend: skip unsafe target path for " + fm.fileName);
       continue;
-    if (c == '{')
-      ++depth;
-    else if (c == '}') {
-      --depth;
-      if (depth == 0) {
-        fileObjEnd = fileObjPos;
-        break;
-      }
     }
+    LsPendingPrepare pp;
+    pp.clientFd = (i == 0 ? fd : -1); // chỉ entry đầu giữ socket
+    pp.sessionId = sessionId;
+    pp.fileId = parsed[i].fid;
+    pp.fileToken = LsUtil::makeUuid();
+    pp.fromAlias = fromAlias;
+    pp.fromIp = fromIp;
+    pp.file = fm;
+    pp.startTime = std::chrono::steady_clock::now();
+    pp.state = LsPendingPrepare::WAITING_USER;
+    pp.savePath = target;
+    pp.relDir = relDirOfFile(fm);
+    totalSize += fm.size;
+    batch.push_back(std::move(pp));
   }
-  if (fileObjEnd == std::string::npos) {
-    sendJsonResponse(fd, 400, "{\"error\":\"bad file body\"}");
-    return true;
-  }
-  std::string fileObj =
-      filesObj.substr(fileObjStart, fileObjEnd - fileObjStart + 1);
-
-  LsJson::getString(fileObj, "id", req.file.id);
-  if (req.file.id.empty())
-    req.file.id = req.fileId;
-  LsJson::getString(fileObj, "fileName", req.file.fileName);
-  LsJson::getString(fileObj, "relativePath", req.file.relativePath);
-  LsJson::getString(fileObj, "fileType", req.file.fileType);
-  LsJson::getString(fileObj, "sha256", req.file.sha256);
-  LsJson::getString(fileObj, "preview", req.file.preview);
-  LsJson::getUint64(fileObj, "size", req.file.size);
-
-  // Mở rộng RomCloud: parse game metadata (sender gửi từ DB).
-  // Receiver sẽ render dialog duyệt với cover art + tên game.
-  {
-    uint64_t u64 = 0;
-    if (LsJson::getUint64(fileObj, "gameId", u64))
-      req.file.gameId = (int64_t)u64;
-    if (LsJson::getUint64(fileObj, "systemId", u64))
-      req.file.systemId = (int)u64;
-  }
-  LsJson::getString(fileObj, "systemCode", req.file.systemCode);
-  LsJson::getString(fileObj, "systemName", req.file.systemName);
-  LsJson::getString(fileObj, "gameTitle", req.file.gameTitle);
-  LsJson::getString(fileObj, "coverPath", req.file.coverPath);
-
-  if (req.file.id.empty())
-    req.file.id = req.fileId;
-
-  if (req.file.fileName.empty()) {
-    sendJsonResponse(fd, 400, "{\"error\":\"missing fileName\"}");
-    return true;
-  }
-
-  // Resolve target path (3-tier)
-  std::string target = resolveTargetPath(req.file);
-  if (target.empty()) {
+  if (batch.empty()) {
     sendJsonResponse(fd, 403, "{\"error\":\"unsafe path\"}");
     return true;
   }
-  req.savedPath = target;
-  req.fileToken = LsUtil::makeUuid();
-
-  // Hold socket response and save into m_preparing
-  LsPendingPrepare pp;
-  pp.clientFd = fd;
-  pp.sessionId = req.sessionId;
-  pp.fileId = req.fileId;
-  pp.fileToken = req.fileToken;
-  pp.fromAlias = req.fromAlias;
-  pp.fromIp = fromIp;
-  pp.file = req.file;
-  pp.startTime = std::chrono::steady_clock::now();
-  pp.state = LsPendingPrepare::WAITING_USER;
-  pp.savePath = target;
 
   {
     std::lock_guard<std::mutex> lock(m_prepareMutex);
-    m_preparing.push_back(pp);
+    m_preparing.insert(m_preparing.end(), batch.begin(), batch.end());
   }
 
-  // Bắn callback cho UI
+  // Bắn callback cho UI: 1 dialog duy nhất cho cả session
   {
+    LsIncomingSession sess;
+    sess.sessionId = sessionId;
+    sess.fromAlias = fromAlias;
+    sess.fromIp = fromIp;
+    sess.totalSize = totalSize;
+    for (const auto &pp : batch)
+      sess.files.push_back(pp.file);
     std::lock_guard<std::mutex> lock(m_cbMutex);
     if (m_onUserPrompt)
-      m_onUserPrompt(req);
+      m_onUserPrompt(sess);
   }
 
   Logger::info("LocalSend: prepare-upload held for user approval from " +
-               req.fromAlias + " file=" + req.file.fileName +
-               " size=" + std::to_string(req.file.size) +
-               " initialTarget=" + req.savedPath);
-
+               fromAlias + " files=" + std::to_string(batch.size()) +
+               " total=" + std::to_string(totalSize));
   return false; // HOLD clientFd, do not close or reply yet!
 }
 
@@ -1642,7 +1712,6 @@ void LocalSendManager::handleCancel(int fd, const std::string &query) {
         r.state = LsUploadRequest::FAILED;
         if (!r.savedPath.empty())
           ::unlink(r.savedPath.c_str());
-        break;
       }
     }
   }
@@ -1664,18 +1733,20 @@ void LocalSendManager::handleCancel(int fd, const std::string &query) {
 // approve/reject từ UI
 // =============================================================
 void LocalSendManager::approveUpload(const std::string &sessionId) {
-  std::string defaultPath;
+  bool hasPreparing = false;
   {
     std::lock_guard<std::mutex> lock(m_prepareMutex);
     for (const auto &pp : m_preparing) {
       if (pp.sessionId == sessionId) {
-        defaultPath = pp.savePath;
+        hasPreparing = true;
         break;
       }
     }
   }
-  if (!defaultPath.empty()) {
-    approveUploadWithPath(sessionId, defaultPath);
+  if (hasPreparing) {
+    // savePath "" -> mỗi file dùng savePath đã resolve lúc prepare
+    // (đúng cho cả session nhiều file).
+    approveUploadWithPath(sessionId, "");
     return;
   }
   std::lock_guard<std::mutex> lock(m_pendingMutex);
@@ -1690,45 +1761,25 @@ void LocalSendManager::approveUpload(const std::string &sessionId) {
 
 void LocalSendManager::approveUploadWithPath(const std::string &sessionId,
                                              const std::string &savePath) {
+  // Gom TẤT CẢ file đang chờ duyệt của session này (multi-file)
+  std::vector<LsPendingPrepare> items;
   int clientFd = -1;
-  LsUploadRequest req;
-  bool found = false;
   {
     std::lock_guard<std::mutex> lock(m_prepareMutex);
-    for (auto it = m_preparing.begin(); it != m_preparing.end(); ++it) {
+    for (auto it = m_preparing.begin(); it != m_preparing.end();) {
       if (it->sessionId == sessionId && it->state == LsPendingPrepare::WAITING_USER) {
         it->state = LsPendingPrepare::APPROVED;
-        it->savePath = savePath;
-        clientFd = it->clientFd;
-
-        req.sessionId = it->sessionId;
-        req.fileId = it->fileId;
-        req.fileToken = it->fileToken;
-        req.fromAlias = it->fromAlias;
-        req.fromIp = it->fromIp;
-        req.file = it->file;
-        req.lastUpdateMs = LsUtil::nowMs();
-        req.state = LsUploadRequest::APPROVED;
-
-        std::string base = LsUtil::basenameOf(req.file.fileName);
-        if (base.empty()) base = req.file.id;
-        std::string destDir = savePath.empty() ? it->savePath : savePath;
-        while (destDir.size() > 1 && destDir.back() == '/') destDir.pop_back();
-        if (destDir.size() >= base.size() && destDir.substr(destDir.size() - base.size()) == base) {
-          req.savedPath = destDir;
-        } else {
-          req.savedPath = destDir + "/" + base;
-        }
-        req.savedPath = chooseAvailablePath(req.savedPath);
-
-        m_preparing.erase(it);
-        found = true;
-        break;
+        if (it->clientFd >= 0)
+          clientFd = it->clientFd;
+        items.push_back(*it);
+        it = m_preparing.erase(it);
+      } else {
+        ++it;
       }
     }
   }
 
-  if (!found) {
+  if (items.empty()) {
     Logger::warn("LocalSend: approveUploadWithPath session not found: " + sessionId);
     return;
   }
@@ -1752,29 +1803,89 @@ void LocalSendManager::approveUploadWithPath(const std::string &sessionId,
             m_pending.end());
       }
     }
-    m_pending.push_back(req);
+  }
+
+  std::string destDir = savePath;
+  while (destDir.size() > 1 && destDir.back() == '/')
+    destDir.pop_back();
+
+  std::vector<LsUploadRequest> reqs;
+  reqs.reserve(items.size());
+  for (const auto &pp : items) {
+    LsUploadRequest req;
+    req.sessionId = pp.sessionId;
+    req.fileId = pp.fileId;
+    req.fileToken = pp.fileToken;
+    req.fromAlias = pp.fromAlias;
+    req.fromIp = pp.fromIp;
+    req.file = pp.file;
+    req.lastUpdateMs = LsUtil::nowMs();
+    req.state = LsUploadRequest::APPROVED;
+
+    std::string base = LsUtil::basenameOf(req.file.fileName);
+    if (base.empty())
+      base = req.file.id;
+    base = LsUtil::basenameOf(base);
+
+    std::string target;
+    if (!destDir.empty()) {
+      // savePath trỏ thẳng tới 1 file (legacy) -> dùng nguyên
+      const bool isFilePath =
+          destDir.size() >= base.size() &&
+          destDir.compare(destDir.size() - base.size(), base.size(), base) == 0 &&
+          (destDir.size() == base.size() ||
+           destDir[destDir.size() - base.size() - 1] == '/');
+      if (isFilePath) {
+        target = destDir;
+      } else {
+        // savePath là thư mục: giữ cấu trúc folder (relDir) nếu có
+        target = destDir;
+        if (!pp.relDir.empty())
+          target += "/" + pp.relDir;
+        target += "/" + base;
+      }
+    } else {
+      target = pp.savePath;
+    }
+    req.savedPath = chooseAvailablePath(target);
+    reqs.push_back(std::move(req));
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(m_pendingMutex);
+    for (const auto &r : reqs)
+      m_pending.push_back(r);
   }
 
   if (clientFd >= 0) {
+    // Trả token cho TỪNG file (spec §4.1: files = {fileId: token})
     std::ostringstream ss;
-    ss << "{\"sessionId\":\"" << req.sessionId << "\",\"files\":{"
-       << "\"" << LsJson::escape(req.fileId) << "\":\"" << req.fileToken
-       << "\"}}";
+    ss << "{\"sessionId\":\"" << sessionId << "\",\"files\":{";
+    for (size_t i = 0; i < reqs.size(); ++i) {
+      if (i > 0)
+        ss << ",";
+      ss << "\"" << LsJson::escape(reqs[i].fileId) << "\":\""
+         << reqs[i].fileToken << "\"";
+    }
+    ss << "}}";
     sendJsonResponse(clientFd, 200, ss.str());
     closeSocket(clientFd);
   }
-  Logger::info("LocalSend: upload approved for " + req.file.fileName + " -> " + req.savedPath);
+  Logger::info("LocalSend: upload approved session=" + sessionId +
+               " files=" + std::to_string(reqs.size()) + " -> " + destDir);
 }
 
 void LocalSendManager::rejectUpload(const std::string &sessionId) {
   int clientFd = -1;
   {
     std::lock_guard<std::mutex> lock(m_prepareMutex);
-    for (auto it = m_preparing.begin(); it != m_preparing.end(); ++it) {
+    for (auto it = m_preparing.begin(); it != m_preparing.end();) {
       if (it->sessionId == sessionId) {
-        clientFd = it->clientFd;
-        m_preparing.erase(it);
-        break;
+        if (it->clientFd >= 0)
+          clientFd = it->clientFd;
+        it = m_preparing.erase(it);
+      } else {
+        ++it;
       }
     }
   }
@@ -1785,10 +1896,8 @@ void LocalSendManager::rejectUpload(const std::string &sessionId) {
   {
     std::lock_guard<std::mutex> lock(m_pendingMutex);
     for (auto &r : m_pending) {
-      if (r.sessionId == sessionId) {
+      if (r.sessionId == sessionId)
         r.state = LsUploadRequest::REJECTED;
-        break;
-      }
     }
   }
   Logger::info("LocalSend: rejected " + sessionId);
@@ -1820,7 +1929,7 @@ void LocalSendManager::pruneStalePrepares() {
 // Callback setters
 // =============================================================
 void LocalSendManager::setOnUserPrompt(
-    std::function<void(const LsUploadRequest &)> cb) {
+    std::function<void(const LsIncomingSession &)> cb) {
   std::lock_guard<std::mutex> lock(m_cbMutex);
   m_onUserPrompt = cb;
 }
