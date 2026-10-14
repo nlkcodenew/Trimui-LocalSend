@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
+#include <set>
 
 using namespace RomCloud;
 
@@ -83,7 +84,10 @@ std::string folderConfirmPath;
 std::string folderConfirmName;
 std::vector<FolderFile> folderConfirmFiles;
 uint64_t folderConfirmTotalBytes = 0;
+// ----- Multi-select: X đánh dấu nhiều file, Y gửi tất cả 1 session -----
+std::set<std::string> markedFiles;  // set absPath đã đánh dấu
 std::deque<LsIncomingSession> incomingRequests;
+std::atomic<bool> needShowTransfers{false};  // Bên nhận: tự chuyển sang màn Transfers khi có file đến
 
 SDL_Color color(uint8_t red, uint8_t green, uint8_t blue, uint8_t alpha = 255) {
   return SDL_Color{red, green, blue, alpha};
@@ -345,7 +349,8 @@ void drawBrowser() {
     const bool selected = index == selectedEntry;
     fillRect(X(40), y, X(944), Y(49), selected ? color(44, 91, 150) : color(30, 36, 46));
     const auto &entry = browserEntries[index];
-    drawText(entry.directory ? "[THƯ MỤC]" : "FILE", X(58), y + Y(13),
+    const bool isMarked = !entry.directory && markedFiles.count(entry.path);
+    drawText(isMarked ? "[X]" : (entry.directory ? "[THƯ MỤC]" : "FILE"), X(58), y + Y(13),
              entry.directory ? color(112, 205, 255) : color(139, 222, 174), fontSmall);
     drawText(entry.name, X(190), y + Y(10), color(246, 248, 252), font, X(620));
     if (!entry.directory) {
@@ -353,7 +358,7 @@ void drawBrowser() {
     }
     y += Y(54);
   }
-  drawFooter("A Mở/Gửi   Y Gửi thư mục   D-Pad Chọn", "B Quay lại");
+  drawFooter("A Mở/Gửi   X Đánh dấu   Y Gửi đã chọn/thư mục", "B Quay lại");
   // Dialog xác nhận gửi thư mục (số file + dung lượng chính xác)
   if (showFolderConfirm) {
     const int dw = X(700), dh = Y(280);
@@ -420,9 +425,14 @@ void drawTransfers() {
   }
   for (const auto &item : receives) {
     if (y > bottomLimit) break;
-    fillRect(X(40), y, X(944), Y(78), color(30, 36, 46));
+    const bool showPath = !item.savedPath.empty();
+    const int rh = showPath ? Y(100) : Y(78);
+    fillRect(X(40), y, X(944), rh, color(30, 36, 46));
     drawText("NHẬN", X(58), y + Y(12), color(139, 222, 174), fontSmall);
     drawText(item.file.fileName, X(130), y + Y(8), color(246, 248, 252), font, X(580));
+    if (showPath) {
+      drawText(item.savedPath, X(130), y + Y(52), color(145, 190, 255), fontSmall, X(700));
+    }
     drawText(receiveStateName(item.state), X(760), y + Y(12), color(139, 222, 174), fontSmall);
     const uint64_t total = std::max<uint64_t>(1, item.file.size);
     const int bar = static_cast<int>(X(760) * (double)item.receivedBytes / (double)total);
@@ -588,6 +598,7 @@ int main(int argc, char **argv) {
   manager.setOnUserPrompt([](const LsIncomingSession &request) {
     std::lock_guard<std::mutex> lock(incomingMutex);
     incomingRequests.push_back(request);
+    needShowTransfers = true;
   });
   manager.setOnComplete([](const LsUploadRequest &) {});
   if (!manager.start()) {
@@ -653,12 +664,37 @@ int main(int argc, char **argv) {
       } else {
       if (input.up) moveSelection(-1, static_cast<int>(browserEntries.size()), selectedEntry);
       if (input.down) moveSelection(1, static_cast<int>(browserEntries.size()), selectedEntry);
-      // Y: gửi cả thư mục đang chọn (hiện dialog xác nhận với số file + dung lượng chính xác)
-      if (input.y && !browserEntries.empty()) {
+      // X: đánh dấu/bỏ đánh dấu file (để gửi nhiều file 1 lần)
+      if (input.x && !browserEntries.empty()) {
         const BrowserEntry entry = browserEntries[selectedEntry];
-        if (entry.directory) {
-          if (prepareFolderSend(entry.path)) {
-            showFolderConfirm = true;
+        if (!entry.directory) {
+          if (markedFiles.count(entry.path)) markedFiles.erase(entry.path);
+          else markedFiles.insert(entry.path);
+        }
+      }
+      // Y: gửi tất cả file đã đánh dấu (1 session) hoặc gửi cả thư mục đang chọn
+      if (input.y && !browserEntries.empty()) {
+        if (!markedFiles.empty()) {
+          // Gửi tất cả file đã đánh dấu trong 1 session duy nhất
+          const auto devices = manager.knownDevices();
+          if (!devices.empty() && selectedDevice < static_cast<int>(devices.size())) {
+            std::vector<std::pair<LsFileMeta, std::string>> batch;
+            batch.reserve(markedFiles.size());
+            for (const auto &p : markedFiles) {
+              LsFileMeta meta;
+              batch.emplace_back(meta, p);
+            }
+            manager.sendFilesAsync(batch, "Đã chọn (" + std::to_string(batch.size()) + " file)",
+                                   devices[selectedDevice]);
+            markedFiles.clear();
+            screen = Screen::Transfers;
+          }
+        } else {
+          const BrowserEntry entry = browserEntries[selectedEntry];
+          if (entry.directory) {
+            if (prepareFolderSend(entry.path)) {
+              showFolderConfirm = true;
+            }
           }
         }
       }
@@ -686,6 +722,9 @@ int main(int argc, char **argv) {
     } else {
       if (input.x) manager.clearFinishedTasks();
       if (input.b) screen = Screen::Home;
+    }
+    if (needShowTransfers.exchange(false)) {
+      screen = Screen::Transfers;
     }
     render();
     SDL_Delay(16);
