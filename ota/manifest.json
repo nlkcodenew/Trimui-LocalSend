@@ -1,47 +1,12 @@
 {
   "files": [
     {
-      "path": "assets/NotoSans-Regular.ttf",
-      "sha256": "371924e7480d3d01807fdc1bd30442d0a6651e6b5ea546482f5883d613cf0419",
-      "size": 201644
-    },
-    {
-      "path": "bin/trimui-localsend",
-      "sha256": "bd2495631b683dfc15296e78ff6013914a027646b72cdd5defd74515ced342d8",
-      "size": 244456
-    },
-    {
-      "path": "config.json",
-      "sha256": "abcb94e2a4207a24947acecb07bc1edf4a5678b8b57c629698a84f9538499353",
-      "size": 177
-    },
-    {
-      "path": "icon.png",
-      "sha256": "0e2b5d1a775245c2d37fd6a9cdbdecfbbdbbc667071cb3e4de40a16436b203da",
-      "size": 6804
-    },
-    {
-      "path": "launch.sh",
-      "sha256": "02c4744434a94f340354c06d46e4a48eb28ccedc2f187d3492046ed0bc731c9b",
-      "size": 1284
-    },
-    {
-      "path": "lib/libcrypto.so.1.1",
-      "sha256": "e40f8d5a4c1ca2c2fdfe0fe4c98f9d7f45cf200b3355a93b78b71f19a4cd25b1",
-      "size": 2875800
-    },
-    {
-      "path": "lib/libssl.so.1.1",
-      "sha256": "a8e40386762686f58a9dfb5115b8924050eff51fcb3393629d4f04ea50ec60c2",
-      "size": 630024
-    },
-    {
-      "path": "ota-update.sh",
-      "sha256": "f1d9f5ae922e541114080de88cfebed42f07e77ad148e5c06b1463d49fddd088",
-      "size": 9435
+      "path": "Trimui-LocalSend-v0.3.2.zip",
+      "sha256": "efa6d41dcb2091c95ad9bd4fc483722f227a66426e1311f8b8da7aa7a85d0573",
+      "size": 1737103
     }
   ],
   "kid": "ls1",
-  "signature": "lGCLTTJ1Q4SQVkkt2YjOPfziwNTlopJz9FB-H9iuurkYcvSOmAHxcd-c1cbRp_HhawUy5Le0ZhgxyUmQGinPDA",
-  "version": "0.3.1"
+  "signature": "e35FeknrFVcJJQ-l8f7rKVll5SnEobmIz6Rk_qTxufzrIsovKz76dHuT2wzNqunerodeLCCLG6n8MelyMK8kCw",
+  "version": "0.3.2"
 }
