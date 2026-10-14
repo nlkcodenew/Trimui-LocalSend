@@ -72,6 +72,17 @@ int browserScroll = 0;
 std::string browserPath = "/mnt/SDCARD";
 std::vector<BrowserEntry> browserEntries;
 std::mutex incomingMutex;
+// ----- Folder send: thu thập đệ quy + dialog xác nhận -----
+struct FolderFile {
+  std::string absPath;
+  std::string relativePath;  // vd "ten-thu-muc/sub/"
+  uint64_t size = 0;
+};
+bool showFolderConfirm = false;
+std::string folderConfirmPath;
+std::string folderConfirmName;
+std::vector<FolderFile> folderConfirmFiles;
+uint64_t folderConfirmTotalBytes = 0;
 std::deque<LsIncomingSession> incomingRequests;
 
 SDL_Color color(uint8_t red, uint8_t green, uint8_t blue, uint8_t alpha = 255) {
@@ -175,6 +186,47 @@ void loadBrowser() {
             });
   selectedEntry = 0;
   browserScroll = 0;
+}
+
+// Duyệt đệ quy thư mục, trả về danh sách file kèm relativePath.
+// folderAbs: vd "/mnt/SDCARD/Roms/GBA", baseName: vd "GBA"
+void collectFolderFiles(const std::string &folderAbs, const std::string &baseName,
+                        const std::string &relPrefix, std::vector<FolderFile> &out) {
+  DIR *dir = opendir(folderAbs.c_str());
+  if (!dir) return;
+  dirent *entry = nullptr;
+  while ((entry = readdir(dir)) != nullptr) {
+    const std::string name = entry->d_name;
+    if (name == "." || name == "..") continue;
+    const std::string path = folderAbs + "/" + name;
+    struct stat st{};
+    if (stat(path.c_str(), &st) != 0) continue;
+    if (S_ISDIR(st.st_mode)) {
+      collectFolderFiles(path, baseName, relPrefix + name + "/", out);
+    } else if (S_ISREG(st.st_mode)) {
+      FolderFile ff;
+      ff.absPath = path;
+      ff.relativePath = baseName + "/" + relPrefix;
+      ff.size = static_cast<uint64_t>(st.st_size);
+      out.push_back(std::move(ff));
+    }
+  }
+  closedir(dir);
+}
+
+// Chuẩn bị dialog xác nhận gửi thư mục: đếm file + tổng bytes (chính xác)
+bool prepareFolderSend(const std::string &folderAbs) {
+  folderConfirmFiles.clear();
+  folderConfirmTotalBytes = 0;
+  folderConfirmPath = folderAbs;
+  // Lấy tên thư mục (basename)
+  size_t pos = folderAbs.find_last_of('/');
+  folderConfirmName = (pos == std::string::npos) ? folderAbs : folderAbs.substr(pos + 1);
+  collectFolderFiles(folderAbs, folderConfirmName, "", folderConfirmFiles);
+  for (const auto &ff : folderConfirmFiles) {
+    folderConfirmTotalBytes += ff.size;
+  }
+  return !folderConfirmFiles.empty();
 }
 
 void moveSelection(int delta, int itemCount, int &selection) {
@@ -301,7 +353,25 @@ void drawBrowser() {
     }
     y += Y(54);
   }
-  drawFooter("A Mở/Gửi   D-Pad Chọn", "B Quay lại");
+  drawFooter("A Mở/Gửi   Y Gửi thư mục   D-Pad Chọn", "B Quay lại");
+  // Dialog xác nhận gửi thư mục (số file + dung lượng chính xác)
+  if (showFolderConfirm) {
+    const int dw = X(700), dh = Y(280);
+    const int dx = (scrW - dw) / 2, dy = (scrH - dh) / 2;
+    fillRect(dx, dy, dw, dh, color(24, 30, 42));
+    fillRect(dx, dy, dw, 3, color(70, 130, 200));
+    fillRect(dx, dy + dh - 3, dw, 3, color(70, 130, 200));
+    fillRect(dx, dy, 3, dh, color(70, 130, 200));
+    fillRect(dx + dw - 3, dy, 3, dh, color(70, 130, 200));
+    drawText("Gửi thư mục?", dx + X(30), dy + Y(25), color(246, 248, 252));
+    drawText(folderConfirmName, dx + X(30), dy + Y(65), color(112, 205, 255), font, X(600));
+    char info[128];
+    snprintf(info, sizeof(info), "%zu file - %s",
+             folderConfirmFiles.size(),
+             LsUtil::humanSize(folderConfirmTotalBytes).c_str());
+    drawText(info, dx + X(30), dy + Y(115), color(177, 189, 206));
+    drawText("A: Gửi    B: Hủy", dx + X(30), dy + Y(180), color(139, 222, 174));
+  }
 }
 
 std::string sendStateName(LsSendProgress::State state) {
@@ -557,8 +627,38 @@ int main(int argc, char **argv) {
       if (input.start) screen = Screen::Transfers;
       if (input.b) running = false;
     } else if (screen == Screen::Browser) {
+      if (showFolderConfirm) {
+        // Dialog xác nhận gửi thư mục: A = gửi, B = hủy
+        if (input.a) {
+          const auto devices = manager.knownDevices();
+          if (!devices.empty() && selectedDevice < static_cast<int>(devices.size())
+              && !folderConfirmFiles.empty()) {
+            // Gửi từng file kèm relativePath để bên nhận giữ cấu trúc thư mục
+            for (const auto &ff : folderConfirmFiles) {
+              LsFileMeta meta;
+              meta.relativePath = ff.relativePath;
+              manager.sendFileMetaAsync(meta, ff.absPath, devices[selectedDevice]);
+            }
+            showFolderConfirm = false;
+            screen = Screen::Transfers;
+          }
+        } else if (input.b) {
+          showFolderConfirm = false;
+          folderConfirmFiles.clear();
+        }
+        // Không xử lý các nút khác khi dialog đang hiện
+      } else {
       if (input.up) moveSelection(-1, static_cast<int>(browserEntries.size()), selectedEntry);
       if (input.down) moveSelection(1, static_cast<int>(browserEntries.size()), selectedEntry);
+      // Y: gửi cả thư mục đang chọn (hiện dialog xác nhận với số file + dung lượng chính xác)
+      if (input.y && !browserEntries.empty()) {
+        const BrowserEntry entry = browserEntries[selectedEntry];
+        if (entry.directory) {
+          if (prepareFolderSend(entry.path)) {
+            showFolderConfirm = true;
+          }
+        }
+      }
       if (input.a && !browserEntries.empty()) {
         const BrowserEntry entry = browserEntries[selectedEntry];
         if (entry.directory) {
@@ -579,6 +679,7 @@ int main(int argc, char **argv) {
           loadBrowser();
         }
       }
+      } // end else (không phải folder confirm dialog)
     } else {
       if (input.x) manager.clearFinishedTasks();
       if (input.b) screen = Screen::Home;
