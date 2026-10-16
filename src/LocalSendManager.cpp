@@ -2279,7 +2279,8 @@ std::string LocalSendManager::resolveTargetPath(const LsFileMeta &file) {
   // thì dùng thẳng relativePath, bỏ qua target folder
   bool isSaveSync = !file.relativePath.empty() &&
       (file.relativePath.rfind(".config/", 0) == 0 ||
-       file.relativePath.rfind("RetroArch/", 0) == 0);
+       file.relativePath.rfind("RetroArch/", 0) == 0 ||
+       file.relativePath.rfind("Emus/PPSSPP/", 0) == 0);
   {
     std::lock_guard<std::mutex> lock(m_targetMutex);
     if (!m_targetFolder.empty() && !isSaveSync) {

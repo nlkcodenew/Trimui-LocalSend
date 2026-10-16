@@ -47,12 +47,33 @@ std::vector<SaveFileInfo> SaveSync::scanLocalSaves(const std::string& sdcardRoot
     SaveDirs::kRetroArchSaves,
   };
   for (const char* d : dirs) {
-    std::string base = sdcardRoot + "/" + d;
-    // relPath sẽ là vd ".config/ppsspp/PSP/SAVEDATA/xxx"
-    // Để giữ cấu trúc khi gửi, ta quét với base=sdcardRoot và relDir=d
     scanDirRecursive(sdcardRoot, d, out);
   }
+  // Quét thêm các bản PPSSPP portable (mỗi version 1 folder)
+  scanPortableSaves(sdcardRoot, out);
   return out;
+}
+
+void SaveSync::scanPortableSaves(const std::string& sdcardRoot,
+                                 std::vector<SaveFileInfo>& out) {
+  // PPSSPP portable: Emus/PPSSPP/<version>/.config/ppsspp/PSP/{SAVEDATA,PPSSPP_STATE}
+  // relPath giữ nguyên cấu trúc đầy đủ để bên nhận lưu đúng chỗ
+  std::string emuDir = sdcardRoot + "/Emus/PPSSPP";
+  DIR* dir = opendir(emuDir.c_str());
+  if (!dir) return;
+  struct dirent* entry;
+  while ((entry = readdir(dir)) != nullptr) {
+    if (entry->d_name[0] == '.') continue;
+    std::string verPath = std::string(entry->d_name) + "/.config/ppsspp/PSP";
+    std::string fullVer = emuDir + "/" + verPath;
+    struct stat st;
+    if (stat(fullVer.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+    // Quét SAVEDATA và PPSSPP_STATE trong folder portable này
+    std::string relBase = "Emus/PPSSPP/" + verPath;
+    scanDirRecursive(sdcardRoot, relBase + "/SAVEDATA", out);
+    scanDirRecursive(sdcardRoot, relBase + "/PPSSPP_STATE", out);
+  }
+  closedir(dir);
 }
 
 std::vector<SaveFileInfo> SaveSync::diffForDownload(

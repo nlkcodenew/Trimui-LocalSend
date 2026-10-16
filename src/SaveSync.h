@@ -29,6 +29,9 @@ class SaveSync {
 public:
   // Quét tất cả thư mục save, trả về danh sách file
   static std::vector<SaveFileInfo> scanLocalSaves(const std::string& sdcardRoot);
+  // Quét thêm các vị trí portable (PPSSPP nhiều version)
+  static void scanPortableSaves(const std::string& sdcardRoot,
+                                std::vector<SaveFileInfo>& out);
 
   // So sánh 2 danh sách, trả về file cần đồng bộ (bên remote mới hơn hoặc local thiếu)
   // localList: danh sách của máy mình, remoteList: danh sách của máy kia
