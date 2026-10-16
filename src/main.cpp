@@ -82,6 +82,13 @@ struct FolderFile {
 };
 bool showFolderConfirm = false;
 std::string folderConfirmPath;
+// Toast thông báo (tự ẩn sau 3 giây, không cần bấm)
+std::string toastMsg;
+uint64_t toastUntilMs = 0;
+void showToast(const std::string &msg) {
+  toastMsg = msg;
+  toastUntilMs = LsUtil::nowMs() + 3000;
+}
 std::string folderConfirmName;
 std::vector<FolderFile> folderConfirmFiles;
 uint64_t folderConfirmTotalBytes = 0;
@@ -559,6 +566,22 @@ void drawIncoming() {
   drawText("B  Từ chối", bx + X(480), by + Y(344), color(255, 139, 139));
 }
 
+void drawToast() {
+  if (toastMsg.empty()) return;
+  if (LsUtil::nowMs() > toastUntilMs) {
+    toastMsg.clear();
+    return;
+  }
+  // Vẽ toast ở giữa dưới màn hình
+  const int boxW = X(600);
+  const int boxH = Y(64);
+  const int bx = (scrW - boxW) / 2;
+  const int by = scrH - Y(140);
+  fillRect(bx, by, boxW, boxH, color(40, 50, 65, 230));
+  fillRect(bx, by, boxW, std::max(1, Y(4)), color(65, 196, 131));
+  drawText(toastMsg, bx + X(24), by + Y(20), color(240, 245, 250), fontSmall, X(552));
+}
+
 void drawSyncInvite() {
   LsSyncInvite invite;
   {
@@ -594,6 +617,7 @@ void render() {
   else drawTransfers();
   drawIncoming();
   drawSyncInvite();
+  drawToast();
   SDL_RenderPresent(renderer);
 }
 
@@ -736,7 +760,14 @@ int main(int argc, char **argv) {
           for (const auto& d : devices) {
             if (d.ip == syncInvite.fromIp) {
               int n = manager.doTwoWaySync(d);
-              if (n > 0) screen = Screen::Transfers;
+              if (n > 0) {
+                screen = Screen::Transfers;
+                showToast("Đang đồng bộ save...");
+              } else if (n == 0) {
+                showToast("Save đã khớp, không cần đồng bộ");
+              } else {
+                showToast("Lỗi đồng bộ save");
+              }
               break;
             }
           }
