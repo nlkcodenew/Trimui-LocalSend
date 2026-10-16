@@ -72,6 +72,8 @@ struct LsFileMeta {
     // → receiver render dialog duyệt với cover art + tên game đẹp.
     int64_t  gameId      = 0;
     int      systemId    = 0;
+    // SaveSync: mtime gốc để bên nhận khôi phục (tránh sync lặp)
+    int64_t  mtime       = 0;
     std::string systemCode;   // "GBA", "PS1", ...
     std::string systemName;
     std::string gameTitle;    // display name (vd "Pokemon - Emerald Version (USA)")

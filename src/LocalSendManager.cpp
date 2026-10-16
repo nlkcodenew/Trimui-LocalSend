@@ -3,6 +3,7 @@
 
 #include "LocalSendManager.h"
 #include "SaveSync.h"
+#include <utime.h>
 #include "AppConfig.h"
 #include "Logger.h"
 
@@ -1294,6 +1295,20 @@ bool parsePrepareFileEntry(const std::string &fileObj, const std::string &fid,
     out.id = fid;
   LsJson::getString(fileObj, "fileName", out.fileName);
   LsJson::getString(fileObj, "relativePath", out.relativePath);
+  {
+    std::string mtimeStr;
+    if (LsJson::getString(fileObj, "mtime", mtimeStr) && !mtimeStr.empty()) {
+      try { out.mtime = std::stoll(mtimeStr); } catch (...) {}
+    } else {
+      // Thử parse dạng số trực tiếp
+      size_t pos = fileObj.find("\"mtime\":");
+      if (pos != std::string::npos) {
+        pos += 8;
+        size_t end = fileObj.find_first_of(",}", pos);
+        try { out.mtime = std::stoll(fileObj.substr(pos, end - pos)); } catch (...) {}
+      }
+    }
+  }
   LsJson::getString(fileObj, "fileType", out.fileType);
   LsJson::getString(fileObj, "sha256", out.sha256);
   LsJson::getString(fileObj, "preview", out.preview);
@@ -1825,6 +1840,7 @@ void LocalSendManager::handleSaveRequest(int fd, const std::string &body,
     meta.fileName = f.fileName;
     meta.relativePath = f.relPath + "/";  // Giữ cấu trúc thư mục save
     meta.size = static_cast<uint64_t>(st.st_size);
+    meta.mtime = static_cast<int64_t>(st.st_mtime);
     batch.emplace_back(meta, absPath);
   }
 
@@ -1917,6 +1933,7 @@ int LocalSendManager::doTwoWaySync(const LsDeviceInfo &peer) {
       meta.fileName = f.fileName;
       meta.relativePath = f.relPath + "/";
       meta.size = static_cast<uint64_t>(st.st_size);
+      meta.mtime = static_cast<int64_t>(st.st_mtime);
       batch.emplace_back(meta, absPath);
     }
     if (!batch.empty()) {
@@ -2464,6 +2481,15 @@ void LocalSendManager::postProcessUpload(const LsUploadRequest &req) {
     return;
   if (req.savedPath.empty())
     return;
+  // SaveSync: khôi phục mtime gốc (tránh sync lặp do mtime lệch)
+  if (req.file.mtime > 0) {
+    struct utimbuf ub;
+    ub.actime = req.file.mtime;
+    ub.modtime = req.file.mtime;
+    if (utime(req.savedPath.c_str(), &ub) == 0) {
+      Logger::info("SaveSync: restored mtime for " + req.savedPath);
+    }
+  }
   Logger::info("LocalSend: file ready at " + req.savedPath);
 }
 
@@ -2831,6 +2857,8 @@ std::string LocalSendManager::sendFileMeta(const LsFileMeta &inMeta,
     prep << "\"relativePath\":\"" << LsJson::escape(meta.relativePath) << "\",";
   }
   prep << "\"size\":" << meta.size << ",";
+  if (meta.mtime > 0)
+    prep << "\"mtime\":" << meta.mtime << ",";
   prep << "\"fileType\":\"" << LsJson::escape(meta.fileType) << "\",";
   if (!meta.sha256.empty())
     prep << "\"sha256\":\"" << LsJson::escape(meta.sha256) << "\",";
@@ -3096,6 +3124,8 @@ std::string LocalSendManager::sendFilesAsync(
         prep << "\"relativePath\":\"" << LsJson::escape(fi.meta.relativePath) << "\",";
       }
       prep << "\"size\":" << fi.meta.size << ",";
+      if (fi.meta.mtime > 0)
+        prep << "\"mtime\":" << fi.meta.mtime << ",";
       prep << "\"fileType\":\"" << LsJson::escape(fi.meta.fileType) << "\"";
       if (!fi.meta.sha256.empty())
         prep << ",\"sha256\":\"" << fi.meta.sha256 << "\"";
