@@ -118,6 +118,8 @@ public:
   // SaveSync 2 chiều: thực hiện đồng bộ (bên xác nhận gọi)
   // Trả về tổng số file đã trao đổi
   int doTwoWaySync(const LsDeviceInfo &peer);
+  // Lấy trạng thái đồng bộ hiện tại (cho UI)
+  SaveSyncStatus saveSyncStatus();
 
   // Lấy progress các file đang/đã gửi (cho UI sender screen).
   std::vector<LsSendProgress> sendProgresses();
@@ -241,6 +243,8 @@ private:
   std::mutex m_cbMutex;
   std::function<void(const LsIncomingSession &)> m_onUserPrompt;
   std::function<void(const LsSyncInvite &)> m_onSyncInvite;
+  SaveSyncStatus m_syncStatus;
+  std::mutex m_syncStatusMutex;
   std::mutex m_syncInviteMutex;
   std::function<void(const LsUploadRequest &)> m_onProgress;
   std::function<void(const LsUploadRequest &)> m_onComplete;

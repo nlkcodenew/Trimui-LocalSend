@@ -408,6 +408,37 @@ std::string receiveStateName(LsUploadRequest::State state) {
 
 void drawTransfers() {
   drawText("Tiến trình truyền file", X(40), Y(84), color(225, 230, 238));
+  // Panel trạng thái đồng bộ Save
+  {
+    auto st = LocalSendManager::instance().saveSyncStatus();
+    if (st.active || (st.sendTotal > 0 || st.recvTotal > 0)) {
+      int py = Y(108);
+      fillRect(X(40), py, X(944), Y(64), color(28, 42, 38));
+      std::string title = "Đồng bộ Save";
+      if (!st.peerAlias.empty()) title += " với " + st.peerAlias;
+      drawText(title, X(58), py + Y(8), color(139, 222, 174), fontSmall);
+      // Đếm số file đã xong từ progress lists
+      int sDone = 0, rDone = 0;
+      {
+        auto sends2 = LocalSendManager::instance().sendProgresses();
+        auto receives2 = LocalSendManager::instance().receiveProgresses();
+        for (const auto &s : sends2) if (s.state == LsSendProgress::DONE) sDone++;
+        for (const auto &r : receives2) if (r.state == LsUploadRequest::DONE) rDone++;
+      }
+      std::string detail;
+      // Chiều gửi: "không cần" nếu không có file, "đang thiếu" nếu đang gửi
+      if (st.sendTotal == 0) detail += "Gửi: không cần";
+      else if (sDone < st.sendTotal) detail += "Gửi: đang thiếu " + std::to_string(st.sendTotal - sDone) + " file";
+      else detail += "Gửi: xong";
+      detail += "   |   ";
+      // Chiều nhận
+      if (st.recvTotal == 0) detail += "Nhận: không cần";
+      else if (rDone < st.recvTotal) detail += "Nhận: đang thiếu " + std::to_string(st.recvTotal - rDone) + " file";
+      else detail += "Nhận: xong";
+      if (!st.active) detail += "   (hoàn tất)";
+      drawText(detail, X(58), py + Y(34), color(200, 210, 220), fontSmall);
+    }
+  }
   auto sends = LocalSendManager::instance().sendProgresses();
   auto receives = LocalSendManager::instance().receiveProgresses();
   const int bottomLimit = scrH - footerH() - Y(60);

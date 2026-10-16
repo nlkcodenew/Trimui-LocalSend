@@ -1901,8 +1901,24 @@ bool LocalSendManager::sendSyncInvite(const LsDeviceInfo &target) {
 
 // Thực hiện đồng bộ 2 chiều (được gọi khi bên nhận xác nhận)
 // Bên này (B) sẽ: 1) tải file mới từ A về, 2) gửi file mới của mình sang A
+SaveSyncStatus LocalSendManager::saveSyncStatus() {
+  std::lock_guard<std::mutex> lock(m_syncStatusMutex);
+  return m_syncStatus;
+}
+
 int LocalSendManager::doTwoWaySync(const LsDeviceInfo &peer) {
   Logger::info("SaveSync 2 chiều: bắt đầu với " + peer.alias);
+  // Khởi tạo trạng thái
+  {
+    std::lock_guard<std::mutex> lock(m_syncStatusMutex);
+    m_syncStatus.active = true;
+    m_syncStatus.peerAlias = peer.alias;
+    m_syncStatus.sendTotal = 0;
+    m_syncStatus.sendDone = 0;
+    m_syncStatus.recvTotal = 0;
+    m_syncStatus.recvDone = 0;
+    m_syncStatus.startMs = LsUtil::nowMs();
+  }
 
   // 1. Lấy danh sách của peer
   std::string respBody;
@@ -1917,6 +1933,11 @@ int LocalSendManager::doTwoWaySync(const LsDeviceInfo &peer) {
   // 2. Tính file cần tải về (peer mới hơn) và cần gửi đi (mình mới hơn)
   auto needDownload = SaveSync::diffForDownload(localList, peerList);
   auto needUpload = SaveSync::diffForDownload(peerList, localList);
+  {
+    std::lock_guard<std::mutex> lock(m_syncStatusMutex);
+    m_syncStatus.sendTotal = static_cast<int>(needUpload.size());
+    m_syncStatus.recvTotal = static_cast<int>(needDownload.size());
+  }
 
   int total = 0;
 
@@ -1982,6 +2003,12 @@ int LocalSendManager::doTwoWaySync(const LsDeviceInfo &peer) {
 
   if (total == 0) {
     Logger::info("SaveSync: đã đồng bộ, không có file mới");
+  }
+  {
+    std::lock_guard<std::mutex> lock(m_syncStatusMutex);
+    m_syncStatus.active = false;
+    m_syncStatus.sendDone = m_syncStatus.sendTotal;
+    m_syncStatus.recvDone = m_syncStatus.recvTotal;
   }
   return total;
 }

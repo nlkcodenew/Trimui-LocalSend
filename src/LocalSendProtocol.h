@@ -58,6 +58,17 @@ struct LsSyncInvite {
     int64_t timestampMs = 0;
 };
 
+// Trạng thái đồng bộ Save (hiển thị UI)
+struct SaveSyncStatus {
+    bool active = false;          // đang trong quá trình đồng bộ
+    std::string peerAlias;        // tên máy đối tác
+    int sendTotal = 0;            // tổng file cần gửi
+    int sendDone = 0;             // file đã gửi xong
+    int recvTotal = 0;            // tổng file cần nhận
+    int recvDone = 0;             // file đã nhận xong
+    int64_t startMs = 0;
+};
+
 // ----- File metadata (spec §4.1 prepare-upload) -----------------------
 struct LsFileMeta {
     std::string id;
