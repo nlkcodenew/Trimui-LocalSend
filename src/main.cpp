@@ -659,6 +659,11 @@ int main(int argc, char **argv) {
 
   auto &manager = LocalSendManager::instance();
   manager.setOnUserPrompt([](const LsIncomingSession &request) {
+    if (request.isSaveSync) {
+      // SaveSync đã auto-approve: chỉ hiện màn Transfers, không cần dialog
+      needShowTransfers = true;
+      return;
+    }
     std::lock_guard<std::mutex> lock(incomingMutex);
     incomingRequests.push_back(request);
     needShowTransfers = true;

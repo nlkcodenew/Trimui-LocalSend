@@ -114,6 +114,7 @@ struct LsIncomingSession {
     std::string fromIp;
     std::vector<LsFileMeta> files;
     uint64_t totalSize = 0;
+    bool isSaveSync = false;  // true = tự động approve, UI không hiện dialog
 };
 
 // ----- 1 request gửi file (sender side) ------------------------------

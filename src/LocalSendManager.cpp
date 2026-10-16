@@ -1430,23 +1430,64 @@ bool LocalSendManager::handlePrepareUpload(int fd, const std::string &body,
     m_preparing.insert(m_preparing.end(), batch.begin(), batch.end());
   }
 
-  // Bắn callback cho UI: 1 dialog duy nhất cho cả session
-  {
-    LsIncomingSession sess;
-    sess.sessionId = sessionId;
-    sess.fromAlias = fromAlias;
-    sess.fromIp = fromIp;
-    sess.totalSize = totalSize;
-    for (const auto &pp : batch)
-      sess.files.push_back(pp.file);
-    std::lock_guard<std::mutex> lock(m_cbMutex);
-    if (m_onUserPrompt)
-      m_onUserPrompt(sess);
+  // SaveSync: tự động approve nếu tất cả file đều là save game
+  // (người dùng đã đồng ý ở dialog invite rồi, không hỏi lại)
+  bool isSaveSync = !batch.empty();
+  for (const auto &pp : batch) {
+    const std::string &rp = pp.file.relativePath;
+    bool isSave = !rp.empty() &&
+        (rp.rfind(".config/", 0) == 0 ||
+         rp.rfind("RetroArch/", 0) == 0 ||
+         rp.rfind("Emus/PPSSPP/", 0) == 0);
+    if (!isSave) { isSaveSync = false; break; }
   }
 
-  Logger::info("LocalSend: prepare-upload held for user approval from " +
-               fromAlias + " files=" + std::to_string(batch.size()) +
-               " total=" + std::to_string(totalSize));
+  if (isSaveSync) {
+    // Auto-approve: đánh dấu APPROVED cho tất cả
+    {
+      std::lock_guard<std::mutex> lock(m_prepareMutex);
+      for (auto &pp : m_preparing) {
+        if (pp.sessionId == sessionId) pp.state = LsPendingPrepare::APPROVED;
+      }
+    }
+    // Bắn callback progress (không phải user prompt) để UI hiện tiến trình
+    // UI sẽ tự hiện màn Transfers khi có incoming (đã có needShowTransfers)
+    {
+      std::lock_guard<std::mutex> lock(m_cbMutex);
+      if (m_onUserPrompt) {
+        // Tạo session giả để trigger needShowTransfers, nhưng không cần dialog
+        // (UI kiểm tra isSaveSync để bỏ qua dialog)
+        LsIncomingSession sess;
+        sess.sessionId = sessionId;
+        sess.fromAlias = fromAlias;
+        sess.fromIp = fromIp;
+        sess.totalSize = totalSize;
+        sess.isSaveSync = true;  // Flag để UI biết
+        for (const auto &pp : batch)
+          sess.files.push_back(pp.file);
+        m_onUserPrompt(sess);
+      }
+    }
+    Logger::info("SaveSync: auto-approved " + std::to_string(batch.size()) +
+                 " files from " + fromAlias);
+  } else {
+    // Bắn callback cho UI: 1 dialog duy nhất cho cả session
+    {
+      LsIncomingSession sess;
+      sess.sessionId = sessionId;
+      sess.fromAlias = fromAlias;
+      sess.fromIp = fromIp;
+      sess.totalSize = totalSize;
+      for (const auto &pp : batch)
+        sess.files.push_back(pp.file);
+      std::lock_guard<std::mutex> lock(m_cbMutex);
+      if (m_onUserPrompt)
+        m_onUserPrompt(sess);
+    }
+    Logger::info("LocalSend: prepare-upload held for user approval from " +
+                 fromAlias + " files=" + std::to_string(batch.size()) +
+                 " total=" + std::to_string(totalSize));
+  }
   return false; // HOLD clientFd, do not close or reply yet!
 }
 
