@@ -2090,7 +2090,12 @@ void LocalSendManager::approveUploadWithPath(const std::string &sessionId,
     } else {
       target = pp.savePath;
     }
-    req.savedPath = chooseAvailablePath(target);
+    // SaveSync: ghi đè file cũ (đồng bộ), không tạo bản sao (1)
+    bool isSave = !pp.file.relativePath.empty() &&
+        (pp.file.relativePath.rfind(".config/", 0) == 0 ||
+         pp.file.relativePath.rfind("RetroArch/", 0) == 0 ||
+         pp.file.relativePath.rfind("Emus/PPSSPP/", 0) == 0);
+    req.savedPath = isSave ? target : chooseAvailablePath(target);
     reqs.push_back(std::move(req));
   }
 
