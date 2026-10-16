@@ -1195,6 +1195,9 @@ bool LocalSendManager::handleHttpClient(int fd) {
   } else if (method == "POST" && route == "/api/savesync/v1/request") {
     handleSaveRequest(fd, body, fromIp);
     return true;
+  } else if (method == "POST" && route == "/api/savesync/v1/invite") {
+    handleSyncInvite(fd, body, fromIp);
+    return true;
   } else {
     Logger::warn("LocalSend: HTTP 404 " + method + " " + route);
     sendJsonResponse(fd, 404, "{\"error\":\"not found\"}");
@@ -1801,6 +1804,112 @@ void LocalSendManager::handleSaveRequest(int fd, const std::string &body,
                " file save tới " + target.alias);
 }
 
+void LocalSendManager::setOnSyncInvite(std::function<void(const LsSyncInvite &)> cb) {
+  std::lock_guard<std::mutex> lock(m_syncInviteMutex);
+  m_onSyncInvite = cb;
+}
+
+void LocalSendManager::handleSyncInvite(int fd, const std::string &body,
+                                        const std::string &fromIp) {
+  // Parse: {"alias":"..."}
+  LsSyncInvite invite;
+  invite.fromIp = fromIp;
+  size_t pos = body.find("\"alias\":\"");
+  if (pos != std::string::npos) {
+    pos += 9;
+    size_t end = body.find("\"", pos);
+    invite.fromAlias = body.substr(pos, end - pos);
+  } else {
+    invite.fromAlias = fromIp;
+  }
+  invite.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+
+  // Gọi callback để UI hiện dialog
+  std::function<void(const LsSyncInvite &)> cb;
+  {
+    std::lock_guard<std::mutex> lock(m_syncInviteMutex);
+    cb = m_onSyncInvite;
+  }
+  if (cb) {
+    cb(invite);
+  }
+
+  sendJsonResponse(fd, 200, "{\"status\":\"received\"}");
+  Logger::info("SaveSync: nhận lời mời đồng bộ từ " + invite.fromAlias);
+}
+
+// Gửi lời mời đồng bộ tới target
+bool LocalSendManager::sendSyncInvite(const LsDeviceInfo &target) {
+  std::string body = "{\"alias\":\"" + m_selfAlias + "\"}";
+  std::string resp;
+  return httpPostJson(target.protocol, target.ip, target.port,
+                      "/api/savesync/v1/invite", body, resp, 10);
+}
+
+// Thực hiện đồng bộ 2 chiều (được gọi khi bên nhận xác nhận)
+// Bên này (B) sẽ: 1) tải file mới từ A về, 2) gửi file mới của mình sang A
+int LocalSendManager::doTwoWaySync(const LsDeviceInfo &peer) {
+  Logger::info("SaveSync 2 chiều: bắt đầu với " + peer.alias);
+
+  // 1. Lấy danh sách của peer
+  std::string respBody;
+  if (!httpGet(peer.protocol, peer.ip, peer.port,
+               "/api/savesync/v1/list", respBody, 10)) {
+    Logger::warn("SaveSync: không lấy được danh sách từ " + peer.alias);
+    return -1;
+  }
+  auto peerList = SaveSync::fromJson(respBody);
+  auto localList = SaveSync::scanLocalSaves("/mnt/SDCARD");
+
+  // 2. Tính file cần tải về (peer mới hơn)
+  auto needDownload = SaveSync::diffForDownload(localList, peerList);
+
+  // 3. Tính file cần gửi đi (mình mới hơn)
+  auto needUpload = SaveSync::diffForDownload(peerList, localList);
+
+  int total = 0;
+
+  // 4. Tải về: yêu cầu peer gửi
+  if (!needDownload.empty()) {
+    std::string reqJson = SaveSync::toJson(needDownload);
+    std::string reqResp;
+    if (httpPostJson(peer.protocol, peer.ip, peer.port,
+                     "/api/savesync/v1/request", reqJson, reqResp, 10)) {
+      total += needDownload.size();
+      Logger::info("SaveSync: yêu cầu " + std::to_string(needDownload.size()) +
+                   " file từ " + peer.alias);
+    }
+  }
+
+  // 5. Gửi đi: push file của mình sang peer
+  if (!needUpload.empty()) {
+    std::vector<std::pair<LsFileMeta, std::string>> batch;
+    for (const auto& f : needUpload) {
+      std::string absPath = "/mnt/SDCARD/" + f.relPath + "/" + f.fileName;
+      struct stat st;
+      if (stat(absPath.c_str(), &st) != 0) continue;
+      LsFileMeta meta;
+      meta.fileName = f.fileName;
+      meta.relativePath = f.relPath + "/";
+      meta.size = static_cast<uint64_t>(st.st_size);
+      batch.emplace_back(meta, absPath);
+    }
+    if (!batch.empty()) {
+      sendFilesAsync(batch, "SaveSync", peer);
+      total += batch.size();
+      Logger::info("SaveSync: đang gửi " + std::to_string(batch.size()) +
+                   " file tới " + peer.alias);
+    }
+  }
+
+  if (total == 0) {
+    Logger::info("SaveSync: đã đồng bộ, không có file mới");
+  }
+  return total;
+}
+
+
 
 
 // =============================================================
@@ -2166,9 +2275,14 @@ std::string LocalSendManager::resolveTargetPath(const LsFileMeta &file) {
   std::string target;
 
   // Tier 1: user-chosen target folder (highest priority)
+  // NGOẠI LỆ: save sync (relativePath bắt đầu bằng .config/ hoặc RetroArch/)
+  // thì dùng thẳng relativePath, bỏ qua target folder
+  bool isSaveSync = !file.relativePath.empty() &&
+      (file.relativePath.rfind(".config/", 0) == 0 ||
+       file.relativePath.rfind("RetroArch/", 0) == 0);
   {
     std::lock_guard<std::mutex> lock(m_targetMutex);
-    if (!m_targetFolder.empty()) {
+    if (!m_targetFolder.empty() && !isSaveSync) {
       std::string dir = normalizeRel(m_targetFolder, true);
       if (!dir.empty())
         target = "/mnt/SDCARD/" + dir + base;

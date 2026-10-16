@@ -51,6 +51,13 @@ struct LsDeviceInfo {
     int64_t lastSeenMs = 0;
 };
 
+// ----- SaveSync invite (đồng bộ 2 chiều) --------------------------------
+struct LsSyncInvite {
+    std::string fromAlias;
+    std::string fromIp;
+    int64_t timestampMs = 0;
+};
+
 // ----- File metadata (spec §4.1 prepare-upload) -----------------------
 struct LsFileMeta {
     std::string id;

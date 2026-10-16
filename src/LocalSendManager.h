@@ -74,6 +74,7 @@ public:
   // ----- Pending upload requests ----------------------------------
   // UI subscribe: callback khi có request mới → render modal A/B.
   void setOnUserPrompt(std::function<void(const LsIncomingSession &)> cb);
+  void setOnSyncInvite(std::function<void(const LsSyncInvite &)> cb);
   // UI subscribe: callback khi có progress update (~mỗi 500ms).
   void setOnProgress(std::function<void(const LsUploadRequest &)> cb);
   // UI subscribe: callback khi upload xong/thất bại.
@@ -112,6 +113,11 @@ public:
   // SaveSync: đồng bộ save với thiết bị target
   // Trả về số file cần tải (>0), 0 = đã đồng bộ, <0 = lỗi
   int requestSaveSync(const LsDeviceInfo &target);
+  // SaveSync 2 chiều: gửi lời mời
+  bool sendSyncInvite(const LsDeviceInfo &target);
+  // SaveSync 2 chiều: thực hiện đồng bộ (bên xác nhận gọi)
+  // Trả về tổng số file đã trao đổi
+  int doTwoWaySync(const LsDeviceInfo &peer);
 
   // Lấy progress các file đang/đã gửi (cho UI sender screen).
   std::vector<LsSendProgress> sendProgresses();
@@ -176,6 +182,10 @@ private:
   void handleSaveList(int fd);
   // SaveSync: nhận danh sách file cần gửi, push qua prepare-upload
   void handleSaveRequest(int fd, const std::string &body, const std::string &fromIp);
+  // SaveSync 2 chiều: nhận lời mời đồng bộ
+  void handleSyncInvite(int fd, const std::string &body, const std::string &fromIp);
+  // UI subscribe: callback khi có lời mời sync mới
+
 
   // Path resolution (3 tầng ưu tiên)
   std::string resolveTargetPath(const LsFileMeta &file);
@@ -230,6 +240,8 @@ private:
   // UI callbacks
   std::mutex m_cbMutex;
   std::function<void(const LsIncomingSession &)> m_onUserPrompt;
+  std::function<void(const LsSyncInvite &)> m_onSyncInvite;
+  std::mutex m_syncInviteMutex;
   std::function<void(const LsUploadRequest &)> m_onProgress;
   std::function<void(const LsUploadRequest &)> m_onComplete;
 

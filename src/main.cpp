@@ -88,6 +88,9 @@ uint64_t folderConfirmTotalBytes = 0;
 // ----- Multi-select: X đánh dấu nhiều file, Y gửi tất cả 1 session -----
 std::set<std::string> markedFiles;  // set absPath đã đánh dấu
 std::deque<LsIncomingSession> incomingRequests;
+// SaveSync 2 chiều: hàng đợi lời mời
+std::deque<LsSyncInvite> syncInvites;
+std::mutex syncInviteMutex;
 std::atomic<bool> needShowTransfers{false};  // Bên nhận: tự chuyển sang màn Transfers khi có file đến
 
 SDL_Color color(uint8_t red, uint8_t green, uint8_t blue, uint8_t alpha = 255) {
@@ -525,6 +528,32 @@ void drawIncoming() {
   drawText("B  Từ chối", bx + X(480), by + Y(344), color(255, 139, 139));
 }
 
+void drawSyncInvite() {
+  LsSyncInvite invite;
+  {
+    std::lock_guard<std::mutex> lock(syncInviteMutex);
+    if (syncInvites.empty()) return;
+    invite = syncInvites.front();
+  }
+  const int boxW = X(780);
+  const int boxH = Y(360);
+  const int bx = (scrW - boxW) / 2;
+  const int by = (scrH - boxH) / 2;
+  const int tx = bx + X(44);
+  fillRect(0, 0, scrW, scrH, color(0, 0, 0, 160));
+  fillRect(bx, by, boxW, boxH, color(34, 40, 51));
+  fillRect(bx, by, boxW, std::max(1, Y(5)), color(65, 196, 131));
+  drawText("Đồng bộ Save 2 chiều", tx, by + Y(36), color(247, 249, 252));
+  drawText("Từ: " + invite.fromAlias + " (" + invite.fromIp + ")", tx, by + Y(88),
+           color(177, 189, 206), fontSmall, X(690));
+  drawText("Hai máy sẽ trao đổi save game mới nhất", tx, by + Y(138),
+           color(247, 249, 252), fontSmall, X(690));
+  drawText("cho nhau (PSP + RetroArch).", tx, by + Y(172),
+           color(247, 249, 252), fontSmall, X(690));
+  drawText("A  Đồng ý", bx + X(90), by + Y(284), color(139, 222, 174));
+  drawText("B  Từ chối", bx + X(480), by + Y(284), color(255, 139, 139));
+}
+
 void render() {
   SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
   fillRect(0, 0, scrW, scrH, color(15, 18, 24));
@@ -533,6 +562,7 @@ void render() {
   else if (screen == Screen::Browser) drawBrowser();
   else drawTransfers();
   drawIncoming();
+  drawSyncInvite();
   SDL_RenderPresent(renderer);
 }
 
@@ -633,6 +663,10 @@ int main(int argc, char **argv) {
     incomingRequests.push_back(request);
     needShowTransfers = true;
   });
+  manager.setOnSyncInvite([](const LsSyncInvite &invite) {
+    std::lock_guard<std::mutex> lock(syncInviteMutex);
+    syncInvites.push_back(invite);
+  });
   manager.setOnComplete([](const LsUploadRequest &) {});
   if (!manager.start()) {
     Logger::error("Unable to start LocalSend service");
@@ -650,7 +684,34 @@ int main(int argc, char **argv) {
       incomingVisible = !incomingRequests.empty();
       if (incomingVisible) request = incomingRequests.front();
     }
-    if (incomingVisible) {
+    // Ưu tiên dialog sync invite trước
+    bool syncVisible = false;
+    LsSyncInvite syncInvite;
+    {
+      std::lock_guard<std::mutex> lock(syncInviteMutex);
+      syncVisible = !syncInvites.empty();
+      if (syncVisible) syncInvite = syncInvites.front();
+    }
+    if (syncVisible) {
+      if (input.a || input.b) {
+        if (input.a) {
+          // Đồng ý: tìm device info và thực hiện sync 2 chiều
+          auto devices = manager.knownDevices();
+          for (const auto& d : devices) {
+            if (d.ip == syncInvite.fromIp) {
+              int n = manager.doTwoWaySync(d);
+              if (n > 0) screen = Screen::Transfers;
+              break;
+            }
+          }
+          // Nếu không tìm thấy device, tạo tạm
+          // (doTwoWaySync cần LsDeviceInfo)
+        }
+        // Xóa invite khỏi hàng đợi (dù đồng ý hay từ chối)
+        std::lock_guard<std::mutex> lock(syncInviteMutex);
+        if (!syncInvites.empty()) syncInvites.pop_front();
+      }
+    } else if (incomingVisible) {
       if (input.a || input.b) {
         if (input.a) manager.approveUploadWithPath(request.sessionId,
                                                    "/mnt/SDCARD/Download/LocalSend");
@@ -668,15 +729,14 @@ int main(int argc, char **argv) {
         loadBrowser();
         screen = Screen::Browser;
       }
-      // A: đồng bộ save game với thiết bị đang chọn
+      // A: gửi lời mời đồng bộ save 2 chiều tới thiết bị đang chọn
+      // Bên kia sẽ hiện dialog xác nhận, nếu đồng ý thì đồng bộ cả 2 chiều
       if (input.a && !devices.empty() &&
           selectedDevice >= 0 && selectedDevice < static_cast<int>(devices.size())) {
-        int n = manager.requestSaveSync(devices[selectedDevice]);
-        if (n > 0) {
-          // Có file cần đồng bộ, chuyển sang màn Transfers để xem tiến trình
-          screen = Screen::Transfers;
+        if (manager.sendSyncInvite(devices[selectedDevice])) {
+          // Đã gửi lời mời, chờ bên kia xác nhận
+          // (Bên kia xác nhận xong sẽ tự bắt đầu đồng bộ 2 chiều)
         }
-        // n == 0: đã đồng bộ; n < 0: lỗi (log đã ghi)
       }
       if (input.start) screen = Screen::Transfers;
       if (input.b) running = false;
