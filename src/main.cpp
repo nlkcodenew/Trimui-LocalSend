@@ -332,7 +332,7 @@ void drawHome() {
       y += Y(76);
     }
   }
-  drawFooter("D-Pad Chọn   X Gửi file   Y Quét lại", "START Tiến trình   B Thoát");
+  drawFooter("D-Pad Chọn   A Đồng bộ Save   X Gửi file", "Y Quét lại   START Tiến trình   B Thoát");
 }
 
 void drawBrowser() {
@@ -667,6 +667,16 @@ int main(int argc, char **argv) {
         browserPath = "/mnt/SDCARD";
         loadBrowser();
         screen = Screen::Browser;
+      }
+      // A: đồng bộ save game với thiết bị đang chọn
+      if (input.a && !devices.empty() &&
+          selectedDevice >= 0 && selectedDevice < static_cast<int>(devices.size())) {
+        int n = manager.requestSaveSync(devices[selectedDevice]);
+        if (n > 0) {
+          // Có file cần đồng bộ, chuyển sang màn Transfers để xem tiến trình
+          screen = Screen::Transfers;
+        }
+        // n == 0: đã đồng bộ; n < 0: lỗi (log đã ghi)
       }
       if (input.start) screen = Screen::Transfers;
       if (input.b) running = false;

@@ -109,6 +109,10 @@ public:
                              const std::string &folderName,
                              const LsDeviceInfo &target);
 
+  // SaveSync: đồng bộ save với thiết bị target
+  // Trả về số file cần tải (>0), 0 = đã đồng bộ, <0 = lỗi
+  int requestSaveSync(const LsDeviceInfo &target);
+
   // Lấy progress các file đang/đã gửi (cho UI sender screen).
   std::vector<LsSendProgress> sendProgresses();
   // Lấy snapshot các upload đang/đã nhận (cho UI progress screen).
@@ -168,6 +172,10 @@ private:
   void handleFileUpload(int fd, const std::string &query,
                         const std::map<std::string, std::string> &headers);
   void handleCancel(int fd, const std::string &query);
+  // SaveSync: trả về danh sách save local (JSON)
+  void handleSaveList(int fd);
+  // SaveSync: nhận danh sách file cần gửi, push qua prepare-upload
+  void handleSaveRequest(int fd, const std::string &body, const std::string &fromIp);
 
   // Path resolution (3 tầng ưu tiên)
   std::string resolveTargetPath(const LsFileMeta &file);
@@ -182,6 +190,9 @@ private:
   bool httpPostJson(const std::string &protocol, const std::string &ip, int port,
                     const std::string &path, const std::string &jsonBody,
                     std::string &respBody, int timeoutSec = 10);
+  bool httpGet(const std::string &protocol, const std::string &ip, int port,
+               const std::string &path, std::string &respBody, int timeoutSec = 10);
+
   bool httpPostBinary(const std::string &protocol, const std::string &ip, int port,
                       const std::string &path, const std::string &filePath,
                       LsSendProgress &prog);

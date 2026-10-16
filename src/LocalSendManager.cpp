@@ -2,6 +2,7 @@
 // Xem LocalSendManager.h để hiểu kiến trúc.
 
 #include "LocalSendManager.h"
+#include "SaveSync.h"
 #include "AppConfig.h"
 #include "Logger.h"
 
@@ -1188,6 +1189,12 @@ bool LocalSendManager::handleHttpClient(int fd) {
   } else if (method == "POST" && route == "/api/localsend/v2/cancel") {
     handleCancel(fd, query);
     return true;
+  } else if (method == "GET" && route == "/api/savesync/v1/list") {
+    handleSaveList(fd);
+    return true;
+  } else if (method == "POST" && route == "/api/savesync/v1/request") {
+    handleSaveRequest(fd, body, fromIp);
+    return true;
   } else {
     Logger::warn("LocalSend: HTTP 404 " + method + " " + route);
     sendJsonResponse(fd, 404, "{\"error\":\"not found\"}");
@@ -1728,6 +1735,73 @@ void LocalSendManager::handleCancel(int fd, const std::string &query) {
   }
   sendJsonResponse(fd, 200, "{\"cancelled\":true}");
 }
+
+void LocalSendManager::handleSaveList(int fd) {
+  // Quét save local và trả về JSON
+  std::string sdcard = "/mnt/SDCARD";
+  auto saves = SaveSync::scanLocalSaves(sdcard);
+  std::string json = SaveSync::toJson(saves);
+  sendJsonResponse(fd, 200, json);
+}
+
+void LocalSendManager::handleSaveRequest(int fd, const std::string &body,
+                                         const std::string &fromIp) {
+  // Parse danh sách file cần gửi
+  auto fileList = SaveSync::fromJson(body);
+  if (fileList.empty()) {
+    sendJsonResponse(fd, 400, "{\"error\":\"empty list\"}");
+    return;
+  }
+
+  // Tìm device info của requester (để gửi lại)
+  LsDeviceInfo target;
+  bool found = false;
+  {
+    auto devices = knownDevices();
+    for (const auto& d : devices) {
+      if (d.ip == fromIp) {
+        target = d;
+        found = true;
+        break;
+      }
+    }
+  }
+  if (!found) {
+    // Tạo device info tạm từ IP
+    target.ip = fromIp;
+    target.port = 53317;
+    target.protocol = "http";
+    target.alias = fromIp;
+  }
+
+  // Chuẩn bị batch gửi
+  std::vector<std::pair<LsFileMeta, std::string>> batch;
+  for (const auto& f : fileList) {
+    std::string absPath = "/mnt/SDCARD/" + f.relPath + "/" + f.fileName;
+    // Kiểm tra file tồn tại
+    struct stat st;
+    if (stat(absPath.c_str(), &st) != 0) continue;
+
+    LsFileMeta meta;
+    meta.fileName = f.fileName;
+    meta.relativePath = f.relPath + "/";  // Giữ cấu trúc thư mục save
+    meta.size = static_cast<uint64_t>(st.st_size);
+    batch.emplace_back(meta, absPath);
+  }
+
+  if (batch.empty()) {
+    sendJsonResponse(fd, 404, "{\"error\":\"no files found\"}");
+    return;
+  }
+
+  // Gửi async
+  std::string sid = sendFilesAsync(batch, "SaveSync", target);
+  sendJsonResponse(fd, 200, "{\"sessionId\":\"" + sid + "\"}");
+  Logger::info("SaveSync: đang gửi " + std::to_string(batch.size()) +
+               " file save tới " + target.alias);
+}
+
+
 
 // =============================================================
 // approve/reject từ UI
@@ -2277,6 +2351,87 @@ bool LocalSendManager::httpPostJson(const std::string &protocol,
   }
   return true;
 }
+
+bool LocalSendManager::httpGet(const std::string &protocol,
+                               const std::string &ip, int port,
+                               const std::string &path,
+                               std::string &respBody, int timeoutSec) {
+  CURL *curl = curl_easy_init();
+  if (!curl)
+    return false;
+
+  std::string proto = protocol.empty() ? "https" : protocol;
+  std::string url = proto + "://" + ip + ":" + std::to_string(port) + path;
+
+  struct curl_slist *headers = nullptr;
+  headers = curl_slist_append(headers, "Connection: close");
+
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)timeoutSec);
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 6L);
+  curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+
+  respBody.clear();
+  auto writeCb = [](char *ptr, size_t size, size_t nmemb, void *userdata) -> size_t {
+    std::string *s = reinterpret_cast<std::string *>(userdata);
+    s->append(ptr, size * nmemb);
+    return size * nmemb;
+  };
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, (size_t(*)(char*, size_t, size_t, void*))writeCb);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &respBody);
+
+  CURLcode res = curl_easy_perform(curl);
+  long httpCode = 0;
+  if (res == CURLE_OK) {
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+  }
+
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+
+  return (res == CURLE_OK && httpCode == 200);
+}
+
+int LocalSendManager::requestSaveSync(const LsDeviceInfo &target) {
+  // 1. Lấy danh sách save từ remote
+  std::string respBody;
+  if (!httpGet(target.protocol, target.ip, target.port,
+               "/api/savesync/v1/list", respBody, 10)) {
+    Logger::warn("SaveSync: không lấy được danh sách từ " + target.alias);
+    return -1;
+  }
+  auto remoteList = SaveSync::fromJson(respBody);
+
+  // 2. Quét save local
+  auto localList = SaveSync::scanLocalSaves("/mnt/SDCARD");
+
+  // 3. So sánh: file nào cần tải về
+  auto needDownload = SaveSync::diffForDownload(localList, remoteList);
+  if (needDownload.empty()) {
+    Logger::info("SaveSync: đã đồng bộ, không có file mới");
+    return 0;
+  }
+
+  // 4. Gửi yêu cầu: remote sẽ push các file này qua prepare-upload
+  // (Dùng endpoint request để remote chủ động gửi)
+  std::string reqJson = SaveSync::toJson(needDownload);
+  std::string reqResp;
+  if (!httpPostJson(target.protocol, target.ip, target.port,
+                    "/api/savesync/v1/request", reqJson, reqResp, 10)) {
+    Logger::warn("SaveSync: không gửi được yêu cầu đồng bộ");
+    return -1;
+  }
+
+  Logger::info("SaveSync: yêu cầu " + std::to_string(needDownload.size()) +
+               " file từ " + target.alias);
+  return static_cast<int>(needDownload.size());
+}
+
 
 bool LocalSendManager::httpPostBinary(const std::string &protocol,
                                       const std::string &ip, int port,
