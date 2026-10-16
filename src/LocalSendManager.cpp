@@ -1443,33 +1443,28 @@ bool LocalSendManager::handlePrepareUpload(int fd, const std::string &body,
   }
 
   if (isSaveSync) {
-    // Auto-approve: đánh dấu APPROVED cho tất cả
-    {
-      std::lock_guard<std::mutex> lock(m_prepareMutex);
-      for (auto &pp : m_preparing) {
-        if (pp.sessionId == sessionId) pp.state = LsPendingPrepare::APPROVED;
-      }
-    }
-    // Bắn callback progress (không phải user prompt) để UI hiện tiến trình
-    // UI sẽ tự hiện màn Transfers khi có incoming (đã có needShowTransfers)
+    // Auto-approve: gọi approveUploadWithPath ngay để gửi response với tokens
+    // (không chờ user, vì đã đồng ý ở dialog invite)
+    // Cần trigger UI hiện Transfers trước
     {
       std::lock_guard<std::mutex> lock(m_cbMutex);
       if (m_onUserPrompt) {
-        // Tạo session giả để trigger needShowTransfers, nhưng không cần dialog
-        // (UI kiểm tra isSaveSync để bỏ qua dialog)
         LsIncomingSession sess;
         sess.sessionId = sessionId;
         sess.fromAlias = fromAlias;
         sess.fromIp = fromIp;
         sess.totalSize = totalSize;
-        sess.isSaveSync = true;  // Flag để UI biết
+        sess.isSaveSync = true;
         for (const auto &pp : batch)
           sess.files.push_back(pp.file);
         m_onUserPrompt(sess);
       }
     }
+    // Gọi approve để gửi response (hàm này tự xóa khỏi m_preparing và gửi tokens)
+    approveUploadWithPath(sessionId, "");
     Logger::info("SaveSync: auto-approved " + std::to_string(batch.size()) +
                  " files from " + fromAlias);
+    return true; // Đã xử lý xong, đóng kết nối
   } else {
     // Bắn callback cho UI: 1 dialog duy nhất cho cả session
     {
@@ -1903,27 +1898,15 @@ int LocalSendManager::doTwoWaySync(const LsDeviceInfo &peer) {
   auto peerList = SaveSync::fromJson(respBody);
   auto localList = SaveSync::scanLocalSaves("/mnt/SDCARD");
 
-  // 2. Tính file cần tải về (peer mới hơn)
+  // 2. Tính file cần tải về (peer mới hơn) và cần gửi đi (mình mới hơn)
   auto needDownload = SaveSync::diffForDownload(localList, peerList);
-
-  // 3. Tính file cần gửi đi (mình mới hơn)
   auto needUpload = SaveSync::diffForDownload(peerList, localList);
 
   int total = 0;
 
-  // 4. Tải về: yêu cầu peer gửi
-  if (!needDownload.empty()) {
-    std::string reqJson = SaveSync::toJson(needDownload);
-    std::string reqResp;
-    if (httpPostJson(peer.protocol, peer.ip, peer.port,
-                     "/api/savesync/v1/request", reqJson, reqResp, 10)) {
-      total += needDownload.size();
-      Logger::info("SaveSync: yêu cầu " + std::to_string(needDownload.size()) +
-                   " file từ " + peer.alias);
-    }
-  }
-
-  // 5. Gửi đi: push file của mình sang peer
+  // PHASE 1: Gửi đi trước (mình -> peer)
+  // Chạy tuần tự để tránh 2 prepare-upload chồng nhau
+  std::string sendSessionId;
   if (!needUpload.empty()) {
     std::vector<std::pair<LsFileMeta, std::string>> batch;
     for (const auto& f : needUpload) {
@@ -1937,10 +1920,46 @@ int LocalSendManager::doTwoWaySync(const LsDeviceInfo &peer) {
       batch.emplace_back(meta, absPath);
     }
     if (!batch.empty()) {
-      sendFilesAsync(batch, "SaveSync", peer);
+      sendSessionId = sendFilesAsync(batch, "SaveSync", peer);
       total += batch.size();
-      Logger::info("SaveSync: đang gửi " + std::to_string(batch.size()) +
+      Logger::info("SaveSync P1: đang gửi " + std::to_string(batch.size()) +
                    " file tới " + peer.alias);
+    }
+  }
+
+  // Chờ Phase 1 hoàn tất (tối đa 5 phút)
+  if (!sendSessionId.empty()) {
+    for (int i = 0; i < 300; ++i) {
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+      auto progresses = sendProgresses();
+      bool done = true;
+      bool failed = false;
+      for (const auto& p : progresses) {
+        if (p.sessionId == sendSessionId) {
+          if (p.state == LsSendProgress::DONE) { done = true; break; }
+          if (p.state == LsSendProgress::FAILED) { failed = true; done = true; break; }
+          done = false;
+        }
+      }
+      if (done) {
+        if (failed) Logger::warn("SaveSync P1: gửi thất bại");
+        else Logger::info("SaveSync P1: gửi xong");
+        break;
+      }
+    }
+    // Đợi thêm 2s để bên kia xử lý xong
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+  }
+
+  // PHASE 2: Yêu cầu peer gửi về (peer -> mình)
+  if (!needDownload.empty()) {
+    std::string reqJson = SaveSync::toJson(needDownload);
+    std::string reqResp;
+    if (httpPostJson(peer.protocol, peer.ip, peer.port,
+                     "/api/savesync/v1/request", reqJson, reqResp, 10)) {
+      total += needDownload.size();
+      Logger::info("SaveSync P2: yêu cầu " + std::to_string(needDownload.size()) +
+                   " file từ " + peer.alias);
     }
   }
 
