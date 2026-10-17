@@ -6,14 +6,19 @@
       "size": 201644
     },
     {
+      "path": "background.png",
+      "sha256": "132f037b271816bc41427dbca45946ba7705ef1053c59b84fb62e088f01fc74b",
+      "size": 194046
+    },
+    {
       "path": "bin/trimui-localsend",
-      "sha256": "9da2b5744ff1611f4d6bcc6caa0797db3b872acabd7d31dc5397112583519c56",
+      "sha256": "b28293274df8f7da8673fd935369501a35676216f4b2c0a0d1ee4eaadd948b2f",
       "size": 310016
     },
     {
       "path": "config.json",
-      "sha256": "abcb94e2a4207a24947acecb07bc1edf4a5678b8b57c629698a84f9538499353",
-      "size": 177
+      "sha256": "0f59b2e853d704463bce8339b25b09ea745154d596b06895beda2f726e4efac1",
+      "size": 211
     },
     {
       "path": "icon.png",
@@ -42,6 +47,6 @@
     }
   ],
   "kid": "ls1",
-  "signature": "E6NHrtSo8aG-tDwNMoXnq6Xvy8aUyZqKLRGIhF6HWOgH8EwGzRn-MONUm-2XyY5YSpst4QB2cyyPx-mBLVBADw",
-  "version": "0.3.3"
+  "signature": "YPX2P0Y3Wo9LCbe4K2ZwgYFznJM04QDTaB2ommz5oMe31n_WLX41Sb3Oyw9uxtPMeEjFsrLMK54zXzV_7zx9Bg",
+  "version": "0.3.4"
 }

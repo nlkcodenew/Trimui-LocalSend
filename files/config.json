@@ -3,5 +3,6 @@
   "icon": "icon.png",
   "iconsel": "icon.png",
   "launch": "launch.sh",
-  "description": "Gửi và nhận file qua LocalSend trên Stock OS"
+  "description": "Gửi và nhận file qua LocalSend trên Stock OS",
+  "background": "background.png"
 }
