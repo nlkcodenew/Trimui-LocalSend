@@ -2,7 +2,7 @@
   "files": [
     {
       "path": "VERSION",
-      "sha256": "986489ec745f6b45b3e46d0c11e947631c79c6703097e1a5d25624b11a8bec60",
+      "sha256": "9c9a2728fbc8f59e74b3ae5a1223a13f641f61d677aa5f892d1b0d7ab5e9cf6e",
       "size": 7
     },
     {
@@ -17,8 +17,8 @@
     },
     {
       "path": "bin/trimui-localsend",
-      "sha256": "32b835b1a34c4b9359ebdfc44cfac0b58ee5c4378f7516f8185687e2f1a9d956",
-      "size": 342760
+      "sha256": "de19b505055742b06e7f4d58944dce8ea539eca8824d42c602ed8fc2f56a04d7",
+      "size": 346856
     },
     {
       "path": "config.json",
@@ -52,6 +52,6 @@
     }
   ],
   "kid": "ls1",
-  "signature": "c5Xu6t0JVmltVurdzR9yCB9n-RoZXFFbEKmkrG4qKJWWhqYAS8k-9R_g1JsKdC5YlPWNKVf9W10anmDSH7EcCg",
-  "version": "0.3.12"
+  "signature": "kauYRIQPOhAhtihf3q7fwRYiv6A3VWy-0WbbaK4gt1ABCQa0jch3M3m7wrqvLw6zpIISsDB5SgyylIUqHz5sAw",
+  "version": "0.3.13"
 }

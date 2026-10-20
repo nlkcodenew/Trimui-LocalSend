@@ -425,7 +425,8 @@ std::string sha256FinalHex(EVP_MD_CTX *ctx) {
   return hex;
 }
 
-std::string sha256OfFile(const std::string &path) {
+std::string sha256OfFileProgress(const std::string &path,
+                                 const std::function<void(uint64_t)> &onProgress) {
   // Bam trong tien trinh bang OpenSSL EVP. Ban cu popen("sha256sum") spawn
   // 1 tien trinh cho MOI file — voi hang nghin file nho thi chi phi spawn +
   // doc lai tu the lon hon ca thoi gian truyen file.
@@ -437,8 +438,9 @@ std::string sha256OfFile(const std::string &path) {
     return "";
   std::string hex;
   if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) == 1) {
-    char buf[64 * 1024];
+    char buf[256 * 1024];
     bool ok = true;
+    uint64_t done = 0;
     while (in) {
       in.read(buf, sizeof(buf));
       std::streamsize n = in.gcount();
@@ -446,12 +448,21 @@ std::string sha256OfFile(const std::string &path) {
         ok = false;
         break;
       }
+      if (n > 0) {
+        done += (uint64_t)n;
+        if (onProgress)
+          onProgress(done);
+      }
     }
     if (ok)
       hex = sha256FinalHex(ctx);
   }
   EVP_MD_CTX_free(ctx);
   return hex;
+}
+
+std::string sha256OfFile(const std::string &path) {
+  return sha256OfFileProgress(path, nullptr);
 }
 
 std::string humanSize(uint64_t bytes) {
@@ -2748,7 +2759,9 @@ bool LocalSendManager::httpPostBinary(const std::string &protocol,
                                       const std::string &ip, int port,
                                       const std::string &path,
                                       const std::string &filePath,
-                                      LsSendProgress &prog) {
+                                      LsSendProgress &prog,
+                                      LsSendProgress *sharedProg,
+                                      uint64_t sharedBase) {
   FILE *fp = fopen(filePath.c_str(), "rb");
   if (!fp) {
     Logger::warn("LocalSend: cannot open file " + filePath);
@@ -2779,11 +2792,15 @@ bool LocalSendManager::httpPostBinary(const std::string &protocol,
   struct UploadContext {
     FILE *file = nullptr;
     LsSendProgress *prog = nullptr;
+    LsSendProgress *sharedProg = nullptr;
+    uint64_t sharedBase = 0;
     int64_t lastTick = 0;
     uint64_t lastTickBytes = 0;
   } ctx;
   ctx.file = fp;
   ctx.prog = &prog;
+  ctx.sharedProg = sharedProg;
+  ctx.sharedBase = sharedBase;
   ctx.lastTick = LsUtil::nowMs();
   ctx.lastTickBytes = 0;
 
@@ -2794,14 +2811,21 @@ bool LocalSendManager::httpPostBinary(const std::string &protocol,
     if (uctx->prog && uctx->prog->state == LsSendProgress::FAILED) {
       return CURL_READFUNC_ABORT;
     }
-    size_t bytes = fread(buffer, size, nitems, uctx->file);
+    // fread voi size=1 tra ve dung so byte da doc (ban cu nhan voi size
+    // cua callback — chi dung khi size==1).
+    size_t bytes = fread(buffer, 1, size * nitems, uctx->file);
     if (bytes > 0 && uctx->prog) {
-      uctx->prog->sentBytes += (bytes * size);
+      uctx->prog->sentBytes += bytes;
+      if (uctx->sharedProg) {
+        uctx->sharedProg->sentBytes = uctx->sharedBase + uctx->prog->sentBytes;
+      }
       int64_t now = LsUtil::nowMs();
       if (now - uctx->lastTick >= 500) {
         uint64_t diff = uctx->prog->sentBytes - uctx->lastTickBytes;
         uctx->prog->bytesPerSec =
             (uint32_t)(diff * 1000 / std::max<int64_t>(1, now - uctx->lastTick));
+        if (uctx->sharedProg)
+          uctx->sharedProg->bytesPerSec = uctx->prog->bytesPerSec;
         uctx->lastTick = now;
         uctx->lastTickBytes = uctx->prog->sentBytes;
       }
@@ -2934,8 +2958,18 @@ std::string LocalSendManager::sendFileMeta(const LsFileMeta &inMeta,
   std::string fileId = LsUtil::makeUuid();
   meta.id = fileId;
 
-  // Compute SHA256 của file (sender cung cấp để receiver verify)
-  std::string sha = LsUtil::sha256OfFile(absPath);
+  // Pha chuan bi: tinh SHA-256 kem tien do theo byte. State PREPARING de UI
+  // ve thanh "Dang chuan bi" co % thay vi dung im o "Cho chap nhan" ca phut
+  // voi file GB (ham nay chay tren thread nen khi di qua sendFileMetaAsync).
+  prog->state = LsSendProgress::PREPARING;
+  prog->prepTotal = meta.size;
+  prog->prepBytes = 0;
+  prog->prepIndex = 1;
+  prog->prepCount = 1;
+  prog->currentFile = meta.fileName;
+  std::string sha = LsUtil::sha256OfFileProgress(
+      absPath, [prog](uint64_t n) { prog->prepBytes = n; });
+  prog->state = LsSendProgress::NEGOTIATING;
   if (!sha.empty())
     meta.sha256 = sha;
   if (meta.fileType.empty())
@@ -3093,6 +3127,11 @@ std::vector<LsSendProgress> LocalSendManager::sendProgresses() {
     copy.bytesPerSec = p->bytesPerSec;
     copy.state = p->state;
     copy.errorMessage = p->errorMessage;
+    copy.prepBytes = p->prepBytes;
+    copy.prepTotal = p->prepTotal;
+    copy.prepIndex = p->prepIndex;
+    copy.prepCount = p->prepCount;
+    copy.currentFile = p->currentFile;
     out.push_back(std::move(copy));
   }
   return out;
@@ -3191,8 +3230,7 @@ std::string LocalSendManager::sendFilesAsync(
       }
     }
     if (fi.meta.fileType.empty()) fi.meta.fileType = "application/octet-stream";
-    std::string sha = LsUtil::sha256OfFile(absPath);
-    if (!sha.empty()) fi.meta.sha256 = sha;
+    // SHA-256 tinh o thread nen (pha PREPARING) — khong chan UI nua.
     totalBytes += fi.meta.size;
     infos.push_back(std::move(fi));
   }
@@ -3201,19 +3239,49 @@ std::string LocalSendManager::sendFilesAsync(
   prog->sessionId = LsUtil::makeUuid();
   prog->toAlias = target.alias;
   prog->toIp = target.ip;
-  prog->fileName = folderName + " (" + std::to_string(infos.size()) + " file)";
+  prog->fileName = folderName;
   prog->totalBytes = totalBytes;
-  prog->state = LsSendProgress::QUEUED;
+  prog->state = LsSendProgress::PREPARING;
+  prog->prepTotal = totalBytes;
+  prog->prepBytes = 0;
+  prog->prepIndex = 0;
+  prog->prepCount = (int)infos.size();
   {
     std::lock_guard<std::mutex> lock(m_sendMutex);
     if (m_sends.size() >= 16) m_sends.erase(m_sends.begin());
     m_sends.push_back(prog);
   }
+  Logger::info("LocalSend: preparing " + std::to_string(infos.size()) +
+               " files (" + LsUtil::humanSize(totalBytes) + ") for " +
+               target.alias);
   const std::string tmpSid = prog->sessionId;
   LsDeviceInfo targetCopy = target;
 
   std::thread([this, infos = std::move(infos), targetCopy, prog, folderName, totalBytes]() mutable {
     const LsDeviceInfo &target = targetCopy;
+    // Pha PREPARING: hash SHA-256 tung file ngay trong thread nen, bao tien
+    // do theo byte de UI ve thanh chuan bi thay vi dung hinh nhu truoc.
+    const int64_t prepT0 = LsUtil::nowMs();
+    {
+      uint64_t hashedBase = 0;
+      for (size_t i = 0; i < infos.size(); ++i) {
+        auto &fi = infos[i];
+        prog->prepIndex = (int)i + 1;
+        prog->currentFile = LsUtil::basenameOf(fi.absPath);
+        std::string sha = LsUtil::sha256OfFileProgress(
+            fi.absPath, [prog, hashedBase](uint64_t n) {
+              prog->prepBytes = hashedBase + n;
+            });
+        if (!sha.empty())
+          fi.meta.sha256 = sha;
+        hashedBase += fi.meta.size;
+        prog->prepBytes = hashedBase;
+      }
+    }
+    Logger::info("LocalSend: prepared " + std::to_string(infos.size()) +
+                 " files (" + LsUtil::humanSize(totalBytes) + ") in " +
+                 std::to_string(LsUtil::nowMs() - prepT0) + "ms for " +
+                 target.alias);
     prog->state = LsSendProgress::NEGOTIATING;
 
     std::ostringstream prep;
@@ -3280,8 +3348,7 @@ std::string LocalSendManager::sendFilesAsync(
     uint64_t sentBytes = 0;
     for (size_t i = 0; i < infos.size(); ++i) {
       const auto &fi = infos[i];
-      prog->fileName = folderName + " (" + std::to_string(i + 1) + "/" +
-                       std::to_string(infos.size()) + ")";
+      prog->currentFile = LsUtil::basenameOf(fi.absPath);
       std::string path = "/api/localsend/v2/upload?sessionId=" + sessionId +
                          "&fileId=" + fi.fileId;
       auto it = tokens.find(fi.fileId);
@@ -3290,7 +3357,7 @@ std::string LocalSendManager::sendFilesAsync(
       LsSendProgress tmpProg;
       tmpProg.totalBytes = fi.meta.size;
       if (!httpPostBinary(target.protocol, target.ip, target.port, path,
-                          fi.absPath, tmpProg)) {
+                          fi.absPath, tmpProg, prog.get(), sentBytes)) {
         prog->state = LsSendProgress::FAILED;
         prog->errorMessage = "upload failed: " + fi.meta.fileName;
         Logger::warn("LocalSend: folder upload failed: " + fi.meta.fileName);
@@ -3301,7 +3368,7 @@ std::string LocalSendManager::sendFilesAsync(
     }
 
     prog->state = LsSendProgress::DONE;
-    prog->fileName = folderName + " (" + std::to_string(infos.size()) + " file)";
+    prog->currentFile.clear();
     Logger::info("LocalSend: sent folder " + folderName + " (" +
                  std::to_string(infos.size()) + " files, " +
                  LsUtil::humanSize(totalBytes) + ") to " + target.alias);

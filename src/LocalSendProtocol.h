@@ -10,6 +10,7 @@ typedef struct evp_md_ctx_st EVP_MD_CTX;
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -146,10 +147,17 @@ struct LsSendProgress {
         NEGOTIATING = 1,
         UPLOADING = 2,
         DONE = 3,
-        FAILED = 4
+        FAILED = 4,
+        PREPARING = 5  // dang doc file tinh SHA-256 truoc khi gui (chay nen)
     };
     State state = QUEUED;
     std::string errorMessage;
+    // Pha chuan bi (PREPARING): tien do tinh SHA-256 cua toan phien
+    uint64_t prepBytes = 0;  // so byte da hash
+    uint64_t prepTotal = 0;  // tong so byte can hash
+    int prepIndex = 0;       // file dang hash (1-based)
+    int prepCount = 0;       // tong so file cua phien
+    std::string currentFile; // ten file dang xu ly (hash / upload)
 };
 
 // ----- Helper JSON thủ công (không dùng lib) -------------------------
@@ -175,6 +183,9 @@ std::string getOwnIp(const std::string& iface = "wlan0");
 bool mkdirRecursive(const std::string& path, mode_t mode = 0755);
 uint64_t sdFreeBytes(const std::string& path = "/mnt/SDCARD");
 std::string sha256OfFile(const std::string& path);
+// Nhu sha256OfFile nhung bao tien do theo tong so byte da doc (cho PREPARING).
+std::string sha256OfFileProgress(const std::string& path,
+                                 const std::function<void(uint64_t)> &onProgress);
 std::string sha256FinalHex(EVP_MD_CTX *ctx);
 std::string humanSize(uint64_t bytes);
 std::string humanSpeed(uint32_t bytesPerSec);

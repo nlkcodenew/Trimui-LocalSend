@@ -445,6 +445,7 @@ void drawBrowser() {
 std::string sendStateName(LsSendProgress::State state) {
   switch (state) {
   case LsSendProgress::QUEUED: return "Đang chờ";
+  case LsSendProgress::PREPARING: return "Đang chuẩn bị";
   case LsSendProgress::NEGOTIATING: return "Chờ chấp nhận";
   case LsSendProgress::UPLOADING: return "Đang gửi";
   case LsSendProgress::DONE: return "Hoàn tất";
@@ -465,14 +466,52 @@ std::string receiveStateName(LsUploadRequest::State state) {
   return "";
 }
 
+// Thanh tiến trình DÙNG CHUNG cho mọi tác vụ (gửi / nhận / chuẩn bị / đồng
+// bộ): to và rõ hơn thanh cũ — có viền, vệt sáng trên phần đã xong, % nằm
+// giữa thanh. % tính theo byte thật nên nhảy mịn và chính xác.
+void drawProgressBar(int x, int y, int w, uint64_t done, uint64_t total,
+                     SDL_Color fill) {
+  const int h = Y(22);
+  const uint64_t t = std::max<uint64_t>(1, total);
+  if (done > t) done = t;
+  const int pct = (int)((double)done * 100.0 / (double)t);
+  fillRect(x, y, w, h, color(38, 45, 58));
+  const int innerW = std::max(0, w - 4);
+  const int fw = (int)(innerW * (double)done / (double)t);
+  if (fw > 0) {
+    fillRect(x + 2, y + 2, fw, h - 4, fill);
+    const SDL_Color hi{(uint8_t)std::min(255, (int)fill.r + 60),
+                       (uint8_t)std::min(255, (int)fill.g + 60),
+                       (uint8_t)std::min(255, (int)fill.b + 60), 255};
+    fillRect(x + 2, y + 2, fw, std::max(1, (h - 4) / 3), hi);
+  }
+  fillRect(x, y, w, 1, color(80, 92, 112));
+  fillRect(x, y + h - 1, w, 1, color(80, 92, 112));
+  fillRect(x, y, 1, h, color(80, 92, 112));
+  fillRect(x + w - 1, y, 1, h, color(80, 92, 112));
+  char pctBuf[16];
+  snprintf(pctBuf, sizeof(pctBuf), "%d%%", pct);
+  int tw = 0;
+  TTF_SizeUTF8(fontSmall, pctBuf, &tw, nullptr);
+  drawText(pctBuf, x + (w - tw) / 2, y + Y(2), color(245, 248, 252), fontSmall);
+}
+
+// "1.2 GB / 3.8 GB • 8.4 MB/s" — dòng chi tiết dưới tiêu đề mỗi tác vụ.
+std::string progressDetail(uint64_t done, uint64_t total, uint32_t bps) {
+  std::string s = LsUtil::humanSize(done) + " / " + LsUtil::humanSize(total);
+  if (bps > 0) s += "  •  " + LsUtil::humanSpeed(bps);
+  return s;
+}
+
 void drawTransfers() {
   drawText("Tiến trình truyền file", X(40), Y(84), color(225, 230, 238));
+  int listTop = Y(132);
   // Panel trạng thái đồng bộ Save
   {
     auto st = LocalSendManager::instance().saveSyncStatus();
     if (st.active || (st.sendTotal > 0 || st.recvTotal > 0)) {
       int py = Y(108);
-      fillRect(X(40), py, X(944), Y(64), color(28, 42, 38));
+      fillRect(X(40), py, X(944), Y(100), color(28, 42, 38));
       std::string title = "Đồng bộ Save";
       if (!st.peerAlias.empty()) title += " với " + st.peerAlias;
       drawText(title, X(58), py + Y(8), color(139, 222, 174), fontSmall);
@@ -496,26 +535,56 @@ void drawTransfers() {
       else detail += "Nhận: xong";
       if (!st.active) detail += "   (hoàn tất)";
       drawText(detail, X(58), py + Y(34), color(200, 210, 220), fontSmall);
+      const uint64_t syncTotal =
+          std::max<uint64_t>(1, (uint64_t)(st.sendTotal + st.recvTotal));
+      drawProgressBar(X(58), py + Y(60), X(908), (uint64_t)(sDone + rDone),
+                      syncTotal, color(65, 196, 131));
+      listTop = py + Y(112);
     }
   }
   auto sends = LocalSendManager::instance().sendProgresses();
   auto receives = LocalSendManager::instance().receiveProgresses();
   const int bottomLimit = scrH - footerH() - Y(60);
-  int y = Y(132);
+  int y = listTop;
   if (sends.empty() && receives.empty()) {
     drawText("Chưa có tác vụ.", X(50), y, color(160, 170, 184));
   }
   for (const auto &item : sends) {
     if (y > bottomLimit) break;
-    fillRect(X(40), y, X(944), Y(78), color(30, 36, 46));
-    drawText("GỬI", X(58), y + Y(12), color(112, 205, 255), fontSmall);
-    drawText(item.fileName, X(130), y + Y(8), color(246, 248, 252), font, X(580));
-    drawText(sendStateName(item.state), X(760), y + Y(12), color(139, 222, 174), fontSmall);
-    const uint64_t total = std::max<uint64_t>(1, item.totalBytes);
-    const int bar = static_cast<int>(X(760) * (double)item.sentBytes / (double)total);
-    fillRect(X(130), y + Y(47), X(760), Y(10), color(48, 57, 70));
-    fillRect(X(130), y + Y(47), std::min(X(760), bar), Y(10), color(72, 156, 255));
-    y += Y(86);
+    fillRect(X(40), y, X(944), Y(104), color(30, 36, 46));
+    drawText("GỬI", X(58), y + Y(10), color(112, 205, 255), fontSmall);
+    drawText(item.fileName, X(130), y + Y(6), color(246, 248, 252), font, X(580));
+    drawText(sendStateName(item.state), X(760), y + Y(10), color(139, 222, 174), fontSmall);
+    // Dòng chi tiết + thanh tiến trình thống nhất, đổi theo pha của tác vụ
+    std::string detail;
+    uint64_t done = item.sentBytes, total = item.totalBytes;
+    SDL_Color barColor = color(72, 156, 255);
+    if (item.state == LsSendProgress::PREPARING) {
+      done = item.prepBytes;
+      total = item.prepTotal > 0 ? item.prepTotal : item.totalBytes;
+      barColor = color(250, 204, 21);
+      detail = "Đang đọc file " + std::to_string(item.prepIndex) + "/" +
+               std::to_string(item.prepCount);
+      if (!item.currentFile.empty()) detail += ": " + item.currentFile;
+      detail += "  •  " + progressDetail(done, total, 0);
+    } else if (item.state == LsSendProgress::UPLOADING) {
+      detail = progressDetail(done, total, item.bytesPerSec);
+      if (item.prepCount > 1 && !item.currentFile.empty())
+        detail = item.currentFile + "  •  " + detail;
+    } else if (item.state == LsSendProgress::DONE) {
+      detail = "Đã gửi " + LsUtil::humanSize(item.totalBytes) + " tới " + item.toAlias;
+      done = total;
+    } else if (item.state == LsSendProgress::FAILED) {
+      detail = item.errorMessage;
+      barColor = color(235, 96, 96);
+    } else if (item.state == LsSendProgress::NEGOTIATING) {
+      detail = "Đã chuẩn bị xong — chờ " + item.toAlias + " chấp nhận";
+    } else {
+      detail = "Tới: " + item.toAlias;
+    }
+    drawText(detail, X(130), y + Y(38), color(177, 189, 206), fontSmall, X(820));
+    drawProgressBar(X(58), y + Y(66), X(908), done, total, barColor);
+    y += Y(112);
   }
   // Gộp các file cùng session thành 1 thanh duy nhất (giống bên gửi, kiểu AirDrop)
   {
@@ -552,18 +621,20 @@ void drawTransfers() {
       } else {
         displayName = group[0]->file.fileName;
       }
-      fillRect(X(40), y, X(944), Y(100), color(30, 36, 46));
-      drawText("NHẬN", X(58), y + Y(12), color(139, 222, 174), fontSmall);
-      drawText(displayName, X(130), y + Y(8), color(246, 248, 252), font, X(580));
-      drawText(receiveStateName(st), X(760), y + Y(12), color(139, 222, 174), fontSmall);
-      const uint64_t tmax = std::max<uint64_t>(1, total);
-      const int bar = static_cast<int>(X(760) * (double)received / (double)tmax);
-      fillRect(X(130), y + Y(47), X(760), Y(10), color(48, 57, 70));
-      fillRect(X(130), y + Y(47), std::min(X(760), bar), Y(10), color(65, 196, 131));
-      if (!saveDir.empty()) {
-        drawText(saveDir, X(130), y + Y(68), color(145, 190, 255), fontSmall, X(700));
-      }
-      y += Y(100) + Y(8);
+      uint32_t grpBps = 0;
+      for (const auto *p : group)
+        if (p->state == LsUploadRequest::RECEIVING) grpBps = p->bytesPerSec;
+      fillRect(X(40), y, X(944), Y(104), color(30, 36, 46));
+      drawText("NHẬN", X(58), y + Y(10), color(139, 222, 174), fontSmall);
+      drawText(displayName, X(130), y + Y(6), color(246, 248, 252), font, X(580));
+      drawText(receiveStateName(st), X(760), y + Y(10), color(139, 222, 174), fontSmall);
+      std::string detail = progressDetail(received, total, grpBps);
+      if (!saveDir.empty()) detail += "  •  " + saveDir;
+      drawText(detail, X(130), y + Y(38), color(177, 189, 206), fontSmall, X(820));
+      drawProgressBar(X(58), y + Y(66), X(908), received, total,
+                      st == LsUploadRequest::FAILED ? color(235, 96, 96)
+                                                    : color(65, 196, 131));
+      y += Y(112);
     }
   }
   drawFooter("X Xóa tác vụ đã xong", "B Quay lại");

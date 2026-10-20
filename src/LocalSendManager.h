@@ -207,9 +207,14 @@ private:
   bool httpGet(const std::string &protocol, const std::string &ip, int port,
                const std::string &path, std::string &respBody, int timeoutSec = 10);
 
+  // sharedProg/sharedBase: mirror tien do theo byte cua file dang upload vao
+  // progress cua ca phien (batch) de % phien nhay lien tuc thay vi nhay theo
+  // tung file. sharedBase = tong byte cac file da gui xong truoc do.
   bool httpPostBinary(const std::string &protocol, const std::string &ip, int port,
                       const std::string &path, const std::string &filePath,
-                      LsSendProgress &prog);
+                      LsSendProgress &prog,
+                      LsSendProgress *sharedProg = nullptr,
+                      uint64_t sharedBase = 0);
 
   // ----- State -----------------------------------------------------
   std::atomic<bool> m_running{false};
