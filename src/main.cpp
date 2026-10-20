@@ -307,7 +307,7 @@ InputState pollInput() {
 
 void drawHeader() {
   fillRect(0, 0, scrW, headerH(), color(22, 27, 35));
-  drawText("Trimui-LocalSend", X(28), Y(17), color(246, 248, 252));
+  drawText(std::string("Trimui-LocalSend v") + APP_VERSION, X(28), Y(17), color(246, 248, 252));
   const auto &manager = LocalSendManager::instance();
   std::string status = manager.alias() + "  |  " + manager.ownIp();
   int width = 0;
