@@ -123,7 +123,12 @@ if [ -n "${TRIMUI_LS_NO_OTA:-}" ] && [ "$TRIMUI_LS_NO_OTA" != "0" ]; then
   [ "$MODE" = "--apply" ] || say "Da tat OTA (TRIMUI_LS_NO_OTA=1)."
   exit 0
 fi
+# "done" cua phien truoc:
+#  - done <cung version dang cai> -> update da ap dung xong -> xoa, kiem tra tiep
+#  - done <version moi hon>       -> cho restart de ap dung -> bo qua (giua nguyen)
+# Tu chua lanh neu launcher nao quen xoa trang thai (da gap tren Knulli 2026-10-20).
 case "$(cat "$OTA_STATUS" 2>/dev/null)" in
+  "done $CUR") ota_clear;;
   done*) exit 0;;
 esac
 acquire_lock() {
