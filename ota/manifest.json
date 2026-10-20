@@ -2,7 +2,7 @@
   "files": [
     {
       "path": "VERSION",
-      "sha256": "9c9a2728fbc8f59e74b3ae5a1223a13f641f61d677aa5f892d1b0d7ab5e9cf6e",
+      "sha256": "674321dc05c5db36c4fe5c42ad6c138ae7eba5c67dd6b40321316589b6c2f9b8",
       "size": 7
     },
     {
@@ -17,8 +17,13 @@
     },
     {
       "path": "bin/trimui-localsend",
-      "sha256": "de19b505055742b06e7f4d58944dce8ea539eca8824d42c602ed8fc2f56a04d7",
+      "sha256": "d1b34413f03ec2e10c702992df6bffa84f5bffc04f11477ad4cba9c8f21c8634",
       "size": 346856
+    },
+    {
+      "path": "certs/cacert.pem",
+      "sha256": "a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505",
+      "size": 188900
     },
     {
       "path": "config.json",
@@ -47,11 +52,11 @@
     },
     {
       "path": "ota-update.sh",
-      "sha256": "63b9941fbf129589b64cc5a9c054a510e6efeb55cd3c3f08e6f6282de48309e0",
-      "size": 9976
+      "sha256": "87763342708d16e859853513204cf85a58acbc762f7e0f5fbe3f87109c2ecfea",
+      "size": 10670
     }
   ],
   "kid": "ls1",
-  "signature": "kauYRIQPOhAhtihf3q7fwRYiv6A3VWy-0WbbaK4gt1ABCQa0jch3M3m7wrqvLw6zpIISsDB5SgyylIUqHz5sAw",
-  "version": "0.3.13"
+  "signature": "k3bd1Oq5kgwivlgrW7YhOpnZG1lBVEzdoWbg3pPLOd0Hcf1Ntelz3vxXF25Twz7p1a1__kddm675KzU3tetqBw",
+  "version": "0.3.14"
 }

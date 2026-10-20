@@ -74,10 +74,23 @@ ver_newer() {
 }
 fetch() {
   url="$1"; out="$2"
+  # CA bundle dong goi kem app (certs/cacert.pem): stock OS khong co kho
+  # CA he thong nen curl/wget thuan gay TLS o MOI lan tai (may ket o ban
+  # cu mai khong tu len duoc — da gap tren Smart Pro S, keo dai nhieu
+  # release). Co bundle thi bat buoc dung, khong co thi de cong cu tu
+  # dung kho CA he thong (Knulli/Batocera co san).
+  ca=""
+  [ -f "$APP/certs/cacert.pem" ] && ca="$APP/certs/cacert.pem"
   if command -v curl >/dev/null 2>&1; then
+    if [ -n "$ca" ]; then
+      curl -fsSL --cacert "$ca" --connect-timeout 8 --max-time 25 --retry 0 -o "$out" "$url" 2>/dev/null && return 0
+    fi
     curl -fsSL --connect-timeout 8 --max-time 25 --retry 0 -o "$out" "$url" 2>/dev/null && return 0
   fi
   if command -v wget >/dev/null 2>&1; then
+    if [ -n "$ca" ]; then
+      wget -q --ca-certificate="$ca" --timeout=25 --tries=1 -O "$out" "$url" 2>/dev/null && return 0
+    fi
     wget -q --timeout=25 --tries=1 -O "$out" "$url" 2>/dev/null && return 0
   fi
   return 1
