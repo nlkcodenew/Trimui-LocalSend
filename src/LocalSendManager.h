@@ -12,6 +12,7 @@
 #include <memory>
 #include <thread>
 #include <vector>
+#include <openssl/evp.h>
 
 namespace RomCloud {
 
@@ -168,7 +169,8 @@ private:
   uint64_t streamBodyToFile(int fd,
                             const std::map<std::string, std::string> &headers,
                             std::ofstream &out,
-                            const std::function<void(uint64_t)> &onProgress);
+                            const std::function<void(uint64_t)> &onProgress,
+                            EVP_MD_CTX *hashCtx = nullptr);
   void sendJsonResponse(int fd, int statusCode, const std::string &jsonBody);
   void sendEmptyResponse(int fd, int statusCode);
 

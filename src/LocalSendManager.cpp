@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <curl/curl.h>
+#include <openssl/evp.h>
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstdio>
@@ -410,22 +411,47 @@ bool mkdirRecursive(const std::string &path, mode_t mode) {
   return ok;
 }
 
-std::string sha256OfFile(const std::string &path) {
-  std::string cmd = "sha256sum '" + path + "' 2>/dev/null | cut -d' ' -f1";
-  FILE *p = popen(cmd.c_str(), "r");
-  if (!p)
+std::string sha256FinalHex(EVP_MD_CTX *ctx) {
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int dlen = 0;
+  if (!ctx || EVP_DigestFinal_ex(ctx, digest, &dlen) != 1)
     return "";
-  char buf[128] = {0};
-  if (!fgets(buf, sizeof(buf), p)) {
-    pclose(p);
-    return "";
+  static const char *kHex = "0123456789abcdef";
+  std::string hex;
+  for (unsigned int i = 0; i < dlen; i++) {
+    hex.push_back(kHex[digest[i] >> 4]);
+    hex.push_back(kHex[digest[i] & 0xF]);
   }
-  pclose(p);
-  std::string s = buf;
-  while (!s.empty() &&
-         (s.back() == '\n' || s.back() == '\r' || s.back() == ' '))
-    s.pop_back();
-  return s;
+  return hex;
+}
+
+std::string sha256OfFile(const std::string &path) {
+  // Bam trong tien trinh bang OpenSSL EVP. Ban cu popen("sha256sum") spawn
+  // 1 tien trinh cho MOI file — voi hang nghin file nho thi chi phi spawn +
+  // doc lai tu the lon hon ca thoi gian truyen file.
+  std::ifstream in(path, std::ios::binary);
+  if (!in)
+    return "";
+  EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+  if (!ctx)
+    return "";
+  std::string hex;
+  if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) == 1) {
+    char buf[64 * 1024];
+    bool ok = true;
+    while (in) {
+      in.read(buf, sizeof(buf));
+      std::streamsize n = in.gcount();
+      if (n > 0 && EVP_DigestUpdate(ctx, buf, (size_t)n) != 1) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok)
+      hex = sha256FinalHex(ctx);
+  }
+  EVP_MD_CTX_free(ctx);
+  return hex;
 }
 
 std::string humanSize(uint64_t bytes) {
@@ -989,7 +1015,8 @@ bool LocalSendManager::readHttpRequest(
 // =============================================================
 uint64_t LocalSendManager::streamBodyToFile(
     int fd, const std::map<std::string, std::string> &headers,
-    std::ofstream &out, const std::function<void(uint64_t)> &onProgress) {
+    std::ofstream &out, const std::function<void(uint64_t)> &onProgress,
+    EVP_MD_CTX *hashCtx) {
   std::string te;
   auto teIt = headers.find("transfer-encoding");
   if (teIt != headers.end())
@@ -1020,6 +1047,8 @@ uint64_t LocalSendManager::streamBodyToFile(
       }
       if (n == 0)
         return false;
+      if (hashCtx)
+        EVP_DigestUpdate(hashCtx, buf, (size_t)n);
       out.write(buf, n);
       if (!out)
         return false;
@@ -1643,6 +1672,18 @@ void LocalSendManager::handleFileUpload(
     setState(LsUploadRequest::FAILED);
     return;
   }
+  // Buffer ghi 256KB (mac dinh ofstream rat nho) + bam SHA-256 NOI TIEP ngay
+  // trong luc nhan qua hashCtx: khoi doc lai file tu the sau khi nhan xong.
+  std::vector<char> writeBuf(256 * 1024);
+  out.rdbuf()->pubsetbuf(writeBuf.data(), (std::streamsize)writeBuf.size());
+  EVP_MD_CTX *hashCtx = nullptr;
+  if (!wantSha.empty()) {
+    hashCtx = EVP_MD_CTX_new();
+    if (hashCtx && EVP_DigestInit_ex(hashCtx, EVP_sha256(), nullptr) != 1) {
+      EVP_MD_CTX_free(hashCtx);
+      hashCtx = nullptr;  // verify du phong bang sha256OfFile o cuoi
+    }
+  }
 
   uint64_t totalRead = 0;
   uint64_t lastTickBytes = 0;
@@ -1678,9 +1719,15 @@ void LocalSendManager::handleFileUpload(
   uint64_t streamed = streamBodyToFile(fd, headers, out, [&](uint64_t done) {
     totalRead = done;
     pumpProgress(false);
-  });
+  }, hashCtx);
   out.close();
   pumpProgress(true);
+  std::string streamedSha;
+  if (hashCtx) {
+    streamedSha = LsUtil::sha256FinalHex(hashCtx);
+    EVP_MD_CTX_free(hashCtx);
+    hashCtx = nullptr;
+  }
 
   if (streamed == UINT64_MAX) {
     Logger::warn("LocalSend: transport error during upload " + wantName +
@@ -1727,7 +1774,8 @@ void LocalSendManager::handleFileUpload(
   }
 
   if (!wantSha.empty()) {
-    std::string actual = LsUtil::sha256OfFile(savedPath);
+    std::string actual =
+        streamedSha.empty() ? LsUtil::sha256OfFile(savedPath) : streamedSha;
     if (actual != wantSha) {
       Logger::warn("LocalSend: SHA256 mismatch for " + wantName);
       ::unlink(savedPath.c_str());

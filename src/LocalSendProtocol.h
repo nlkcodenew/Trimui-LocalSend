@@ -5,6 +5,7 @@
 // Thiết kế nhẹ: < 200KB RAM, raw POSIX socket, JSON parse thủ công (không lib).
 
 #pragma once
+typedef struct evp_md_ctx_st EVP_MD_CTX;
 
 #include <atomic>
 #include <chrono>
@@ -174,6 +175,7 @@ std::string getOwnIp(const std::string& iface = "wlan0");
 bool mkdirRecursive(const std::string& path, mode_t mode = 0755);
 uint64_t sdFreeBytes(const std::string& path = "/mnt/SDCARD");
 std::string sha256OfFile(const std::string& path);
+std::string sha256FinalHex(EVP_MD_CTX *ctx);
 std::string humanSize(uint64_t bytes);
 std::string humanSpeed(uint32_t bytesPerSec);
 int64_t nowMs();
