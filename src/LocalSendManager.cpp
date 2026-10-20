@@ -1273,9 +1273,23 @@ std::string normalizeRelDir(const std::string &s) {
 // Thư mục tương đối cần giữ lại của 1 file: từ relativePath của sender,
 // hoặc từ dirname của fileName nếu sender encode path vào fileName.
 std::string relDirOfFile(const LsFileMeta &fm) {
-  if (!fm.relativePath.empty())
-    return normalizeRelDir(fm.relativePath);
-  auto pos = fm.fileName.find('/');
+  if (!fm.relativePath.empty()) {
+    std::string rel = normalizeRelDir(fm.relativePath);
+    // relativePath co 2 dang: thu muc (gui folder: "GBA/sub/") hoac path
+    // day du gom ten file (SaveSync: "ra/game.srm"). Neu doan cuoi trung
+    // ten file thi bo doan cuoi, chi giu thu muc chua.
+    std::string base = LsUtil::basenameOf(fm.fileName);
+    if (!base.empty() && !rel.empty()) {
+      auto pos = rel.find_last_of('/');
+      std::string last = (pos == std::string::npos) ? rel : rel.substr(pos + 1);
+      if (last == base)
+        rel = (pos == std::string::npos) ? "" : rel.substr(0, pos);
+    }
+    return rel;
+  }
+  // Sender encode path vao fileName ("GBA/sub/game.gba"): giu NGUYEN
+  // dirname (ban cu chi lay doan dau -> mat cac thu muc con sau hon 1 cap).
+  auto pos = fm.fileName.find_last_of('/');
   if (pos != std::string::npos)
     return normalizeRelDir(fm.fileName.substr(0, pos));
   return "";
@@ -2398,8 +2412,12 @@ std::string LocalSendManager::resolveTargetPath(const LsFileMeta &file) {
     std::lock_guard<std::mutex> lock(m_targetMutex);
     if (!m_targetFolder.empty() && !isSaveSync) {
       std::string dir = normalizeRel(m_targetFolder, true);
-      if (!dir.empty())
-        target = "/mnt/SDCARD/" + dir + base;
+      if (!dir.empty()) {
+        // Giu cau truc folder con cua sender duoi target folder (ban cu
+        // chi noi thang base -> file trong thu muc con bi don phang).
+        std::string sub = relDirOfFile(file);
+        target = "/mnt/SDCARD/" + dir + (sub.empty() ? "" : sub + "/") + base;
+      }
     }
   }
 
@@ -3104,6 +3122,15 @@ std::string LocalSendManager::sendFilesAsync(
     fi.meta = p.first;
     fi.absPath = absPath;
     fi.meta.fileName = LsUtil::basenameOf(absPath);
+    // Gui folder: encode thu muc tuong doi vao fileName tren day theo
+    // chuan LocalSend ("GBA/sub/game.gba") — app chinh thuc o dau kia
+    // chi hieu dang nay (truong relativePath rieng cua ta bi bo qua,
+    // file bi don phang vao thu muc goc). Ben nhan Trimui doc duoc ca hai.
+    if (!fi.meta.relativePath.empty()) {
+      std::string rd = fi.meta.relativePath;
+      if (rd.back() != '/') rd += '/';
+      fi.meta.fileName = rd + fi.meta.fileName;
+    }
     fi.meta.size = (uint64_t)st.st_size;
     fi.fileId = LsUtil::makeUuid();
     fi.meta.id = fi.fileId;
