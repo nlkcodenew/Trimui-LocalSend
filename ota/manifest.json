@@ -12,7 +12,7 @@
     },
     {
       "path": "bin/trimui-localsend",
-      "sha256": "9b3ee4fa3f1f7cd12c6141512e8d2c1d70a93dd8c5add7c4f44553edb22218e8",
+      "sha256": "2ff68e393489d6abbc889dddd2dfadd910a7c4e1043b92fce1ee877704332dc3",
       "size": 342760
     },
     {
@@ -42,11 +42,11 @@
     },
     {
       "path": "ota-update.sh",
-      "sha256": "f1d9f5ae922e541114080de88cfebed42f07e77ad148e5c06b1463d49fddd088",
-      "size": 9435
+      "sha256": "ea8785fe9810a0cf5048b6094137ddd2ef2495752568bee96a72b5c30ca21401",
+      "size": 9739
     }
   ],
   "kid": "ls1",
-  "signature": "qJEPXBHCWVGQ7kwiBv6F0vrmITIlCTNKWtH46qQ63ORTxrRfuo0Hp1bkkpvSMBXap3yfGsTKRSxde_YtLVUjAQ",
-  "version": "0.3.8"
+  "signature": "K5cYqPgVEcU3TNMNFlCfIjjqAUl8Qwi0MORx8D2YQ4C4ZcmSewTLUzAQzMMC-3AyS6D6EcmModIFrm68uKPyCQ",
+  "version": "0.3.9"
 }
