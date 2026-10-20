@@ -1831,7 +1831,8 @@ void LocalSendManager::handleSaveRequest(int fd, const std::string &body,
   // Chuẩn bị batch gửi
   std::vector<std::pair<LsFileMeta, std::string>> batch;
   for (const auto& f : fileList) {
-    std::string absPath = "/mnt/SDCARD/" + f.relPath + "/" + f.fileName;
+    // relPath trên wire là canonical -> dịch sang vật lý của máy này
+    std::string absPath = SaveSync::resolveLocalPath("/mnt/SDCARD", f.relPath, f.fileName);
     // Kiểm tra file tồn tại
     struct stat st;
     if (stat(absPath.c_str(), &st) != 0) continue;
@@ -1947,7 +1948,8 @@ int LocalSendManager::doTwoWaySync(const LsDeviceInfo &peer) {
   if (!needUpload.empty()) {
     std::vector<std::pair<LsFileMeta, std::string>> batch;
     for (const auto& f : needUpload) {
-      std::string absPath = "/mnt/SDCARD/" + f.relPath + "/" + f.fileName;
+      // needUpload lấy từ localList -> absPath vật lý đã quét sẵn
+      std::string absPath = f.absPath;
       struct stat st;
       if (stat(absPath.c_str(), &st) != 0) continue;
       LsFileMeta meta;
@@ -2389,7 +2391,9 @@ std::string LocalSendManager::resolveTargetPath(const LsFileMeta &file) {
   bool isSaveSync = !file.relativePath.empty() &&
       (file.relativePath.rfind(".config/", 0) == 0 ||
        file.relativePath.rfind("RetroArch/", 0) == 0 ||
-       file.relativePath.rfind("Emus/PPSSPP/", 0) == 0);
+       file.relativePath.rfind("Emus/PPSSPP/", 0) == 0 ||
+       file.relativePath == "ra" || file.relativePath.rfind("ra/", 0) == 0 ||
+       file.relativePath == "psp" || file.relativePath.rfind("psp/", 0) == 0);
   {
     std::lock_guard<std::mutex> lock(m_targetMutex);
     if (!m_targetFolder.empty() && !isSaveSync) {
@@ -2402,9 +2406,17 @@ std::string LocalSendManager::resolveTargetPath(const LsFileMeta &file) {
   // Tier 2: relativePath từ sender (RomCloud sender) — giữ đúng path gửi tới
   if (target.empty() && !file.relativePath.empty()) {
     std::string dir = normalizeRel(file.relativePath, true);
-    if (!dir.empty())
-      target = "/mnt/SDCARD/" + dir + base;
-    else
+    if (!dir.empty()) {
+      // Canonical save-sync path -> dịch sang vị trí vật lý của máy này
+      std::string canon = normalizeSaveRel(dir);
+      bool isCanonSave = (canon == "ra" || canon.rfind("ra/", 0) == 0 ||
+                          canon == "psp" || canon.rfind("psp/", 0) == 0);
+      if (isCanonSave)
+        target = SaveSync::resolveLocalPath("/mnt/SDCARD", canon, base, "", true);
+      else
+        target = "/mnt/SDCARD/" + dir + base;
+    }
+    if (target.empty())
       target = "/mnt/SDCARD/Inbox/" + base;
   }
 
