@@ -12,8 +12,8 @@
     },
     {
       "path": "bin/trimui-localsend",
-      "sha256": "b28293274df8f7da8673fd935369501a35676216f4b2c0a0d1ee4eaadd948b2f",
-      "size": 310016
+      "sha256": "26db77952b33d8a08f1fdb02a84d6c1aaa73fe26fc51ca3dde2bb4e289a7f141",
+      "size": 338664
     },
     {
       "path": "config.json",
@@ -27,8 +27,8 @@
     },
     {
       "path": "launch.sh",
-      "sha256": "02c4744434a94f340354c06d46e4a48eb28ccedc2f187d3492046ed0bc731c9b",
-      "size": 1284
+      "sha256": "8fe4ebefd8182f3669263bfe87367f1eda2c056936f4a08012b4ad5a8828bd37",
+      "size": 1779
     },
     {
       "path": "lib/libcrypto.so.1.1",
@@ -47,6 +47,6 @@
     }
   ],
   "kid": "ls1",
-  "signature": "YPX2P0Y3Wo9LCbe4K2ZwgYFznJM04QDTaB2ommz5oMe31n_WLX41Sb3Oyw9uxtPMeEjFsrLMK54zXzV_7zx9Bg",
-  "version": "0.3.4"
+  "signature": "hoYnWCOjL6EFOX_yibXuWZxjtklskM-0c1_fJYD7roZ6n8UkEWUiS1Djopkx5DNiTR8wQxnH9n4C1xHvbCH8BA",
+  "version": "0.3.5"
 }
