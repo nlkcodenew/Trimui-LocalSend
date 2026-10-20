@@ -305,9 +305,61 @@ InputState pollInput() {
   return input;
 }
 
+// Doc trang thai OTA tu .ota-status (ota-update.sh ghi nen):
+//   available <ver> | downloading <ver> <done> <total> <file>
+//   installing <ver> <done> <total> | done <ver>
+// Tra ve text thong bao ngan cho header; "" = khong co gi de bao.
+static std::string otaNoticeText() {
+  static std::string cached;
+  static int frame = 0;
+  if ((frame++ % 60) != 0 && !cached.empty()) return cached;
+  std::string path = appDirectory + "/.ota-status";
+  FILE *f = fopen(path.c_str(), "r");
+  if (!f) { cached.clear(); return cached; }
+  char buf[256] = {0};
+  size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+  fclose(f);
+  if (n == 0) { cached.clear(); return cached; }
+  std::string line(buf, n);
+  std::vector<std::string> tok;
+  std::string cur;
+  for (char c : line) {
+    if (c == ' ' || c == '\n' || c == '\r') {
+      if (!cur.empty()) { tok.push_back(cur); cur.clear(); }
+    } else cur += c;
+  }
+  if (!cur.empty()) tok.push_back(cur);
+  if (tok.size() < 2) { cached.clear(); return cached; }
+  const std::string &state = tok[0];
+  const std::string &ver = tok[1];
+  if (state == "available") {
+    cached = "Có bản mới v" + ver + " - đang chuẩn bị tải...";
+  } else if (state == "downloading") {
+    cached = "Đang tải bản v" + ver + "...";
+    if (tok.size() >= 4) {
+      long long d = atoll(tok[2].c_str());
+      long long t = atoll(tok[3].c_str());
+      if (t > 0) cached += " " + std::to_string(d * 100 / t) + "%";
+    }
+  } else if (state == "installing") {
+    cached = "Đang cài bản v" + ver + "...";
+  } else if (state == "done") {
+    cached = "Đã tải xong v" + ver + " - khởi động lại app để áp dụng";
+  } else {
+    cached.clear();
+  }
+  return cached;
+}
+
 void drawHeader() {
   fillRect(0, 0, scrW, headerH(), color(22, 27, 35));
   drawText(std::string("Trimui-LocalSend v") + APP_VERSION, X(28), Y(17), color(246, 248, 252));
+  std::string notice = otaNoticeText();
+  if (!notice.empty()) {
+    bool isDone = notice.rfind("Đã tải xong", 0) == 0;
+    drawText(notice, X(28), Y(42),
+             isDone ? color(139, 222, 174) : color(250, 204, 21), fontSmall);
+  }
   const auto &manager = LocalSendManager::instance();
   std::string status = manager.alias() + "  |  " + manager.ownIp();
   int width = 0;
