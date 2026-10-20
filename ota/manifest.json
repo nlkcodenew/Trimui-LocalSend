@@ -1,6 +1,11 @@
 {
   "files": [
     {
+      "path": "VERSION",
+      "sha256": "986489ec745f6b45b3e46d0c11e947631c79c6703097e1a5d25624b11a8bec60",
+      "size": 7
+    },
+    {
       "path": "assets/NotoSans-Regular.ttf",
       "sha256": "371924e7480d3d01807fdc1bd30442d0a6651e6b5ea546482f5883d613cf0419",
       "size": 201644
@@ -12,7 +17,7 @@
     },
     {
       "path": "bin/trimui-localsend",
-      "sha256": "9678862177080e7664f11e4fadb7e8d02b8bde954680b529c2b0c319ed4f0426",
+      "sha256": "32b835b1a34c4b9359ebdfc44cfac0b58ee5c4378f7516f8185687e2f1a9d956",
       "size": 342760
     },
     {
@@ -42,11 +47,11 @@
     },
     {
       "path": "ota-update.sh",
-      "sha256": "ea8785fe9810a0cf5048b6094137ddd2ef2495752568bee96a72b5c30ca21401",
-      "size": 9739
+      "sha256": "63b9941fbf129589b64cc5a9c054a510e6efeb55cd3c3f08e6f6282de48309e0",
+      "size": 9976
     }
   ],
   "kid": "ls1",
-  "signature": "xWMXjfnNoIqQ8SNv8ygDvBT_X9_8sRIniDFBO6yanQmDkODHgPDxMYJOCcZqjfpSQegTfK7_OqwI5VkZWVnIBQ",
-  "version": "0.3.11"
+  "signature": "c5Xu6t0JVmltVurdzR9yCB9n-RoZXFFbEKmkrG4qKJWWhqYAS8k-9R_g1JsKdC5YlPWNKVf9W10anmDSH7EcCg",
+  "version": "0.3.12"
 }

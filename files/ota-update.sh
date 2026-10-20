@@ -223,7 +223,13 @@ while IFS= read -r f; do
 done < "$LIST"
 if [ "$APPLY_FAIL" != "0" ]; then ota_status "failed"; clean_tmp; exit 1; fi
 cd "$APP" || exit 1
-printf "%s" "$REM" | tr -d " \r\n" > "$APP/VERSION" 2>/dev/null
+# Ghi lai VERSION sau khi cai: neu ghi loi ma van bao done thi lan chay sau
+# se tai lai dung ban vua cai (CUR doc tu file nay). Log ro de debug.
+if printf "%s" "$REM" | tr -d " \r\n" > "$APP/VERSION" 2>/dev/null; then
+  say "Da ghi VERSION=$REM"
+else
+  say "CANH BAO: khong ghi duoc $APP/VERSION"
+fi
 say "Cap nhat xong $CUR -> $REM (co hieu luc o lan mo app tiep theo)."
 ota_status "done $REM"
 clean_tmp
