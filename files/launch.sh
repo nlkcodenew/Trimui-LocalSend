@@ -26,14 +26,25 @@ if [ -z "$TRIMUI_LS_NO_OTA" ] && [ -f "$APP/ota-update.sh" ]; then
       sh "$APP/ota-update.sh" --apply >> "$APP/ota.log" 2>&1
       sleep 600
     done
-  ) &
+  ) </dev/null >> "$APP/ota.log" 2>&1 &
   OTA_PID=$!
 fi
 
 "$APP/bin/trimui-localsend" >> "$APP/localsend.log" 2>&1
 CODE=$?
 
-[ -n "${OTA_PID:-}" ] && kill "$OTA_PID" 2>/dev/null
+# Kill vong OTA + cac con (sleep/curl) cua no. Launcher kieu
+# emulatorlauncher (Knulli/Batocera) chay script voi stdout/stderr la
+# PIPE va cho pipe EOF; tien trinh mo coi giu pipe mo -> ES ket sau khi
+# app thoat ("treo"). Knulli khong co pkill -> quet /proc theo PPID.
+if [ -n "${OTA_PID:-}" ]; then
+  kill "$OTA_PID" 2>/dev/null
+  for p in /proc/[0-9]*; do
+    [ -r "$p/stat" ] || continue
+    pp=$(awk '{print $4}' "$p/stat" 2>/dev/null)
+    [ "$pp" = "$OTA_PID" ] && kill "${p#/proc/}" 2>/dev/null
+  done
+fi
 rm -f /tmp/stay_alive 2>/dev/null || true
 sync
 exit "$CODE"
