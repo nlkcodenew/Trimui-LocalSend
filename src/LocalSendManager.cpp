@@ -45,25 +45,6 @@ static inline void closeSocket(int fd) {
 #endif
 }
 
-static std::string chooseAvailablePath(const std::string &requestedPath) {
-  struct stat status{};
-  if (::stat(requestedPath.c_str(), &status) != 0)
-    return requestedPath;
-  const std::string directory = LsUtil::dirnameOf(requestedPath);
-  const std::string filename = LsUtil::basenameOf(requestedPath);
-  const size_t dot = filename.find_last_of('.');
-  const bool hasExtension = dot != std::string::npos && dot != 0;
-  const std::string stem = hasExtension ? filename.substr(0, dot) : filename;
-  const std::string extension = hasExtension ? filename.substr(dot) : "";
-  for (int suffix = 1; suffix < 10000; ++suffix) {
-    const std::string candidate = directory + "/" + stem + " (" +
-                                  std::to_string(suffix) + ")" + extension;
-    if (::stat(candidate.c_str(), &status) != 0)
-      return candidate;
-  }
-  return requestedPath;
-}
-
 // =============================================================
 // Singleton
 // =============================================================
@@ -1335,6 +1316,29 @@ std::string relDirOfFile(const LsFileMeta &fm) {
   return "";
 }
 
+// Nhận diện file thuộc SaveSync theo đường dẫn hiệu dụng: relativePath
+// riêng, hoặc thư mục encode trong fileName (sender gập đường dẫn vào
+// fileName theo chuẩn LocalSend). Chấp nhận cả dạng canonical (ra/, psp/)
+// lẫn dạng vật lý cũ (.config/, RetroArch/, Emus/PPSSPP/) để binary cũ
+// gửi chéo vẫn nhận đúng. Trước đây 3 điểm kiểm tra chỉ biết dạng cũ nên
+// batch canonical bị coi là transfer thường: mất auto-approve, bị đổ vào
+// thư mục tải + hậu tố (1)(2)(3) thay vì ghi vào cây save.
+static bool isSaveSyncMeta(const LsFileMeta &fm) {
+  std::string rel = relDirOfFile(fm);
+  if (!rel.empty()) {
+    std::string canon = normalizeSaveRel(rel);
+    if (canon == "ra" || canon.rfind("ra/", 0) == 0 ||
+        canon == "psp" || canon.rfind("psp/", 0) == 0)
+      return true;
+  }
+  const std::string &rp = fm.relativePath;
+  return !rp.empty() &&
+      (rp.rfind(".config/", 0) == 0 || rp.rfind("RetroArch/", 0) == 0 ||
+       rp.rfind("Emus/PPSSPP/", 0) == 0 ||
+       rp == "ra" || rp.rfind("ra/", 0) == 0 ||
+       rp == "psp" || rp.rfind("psp/", 0) == 0);
+}
+
 struct ParsedFile {
   std::string fid;
   LsFileMeta meta;
@@ -1503,11 +1507,7 @@ bool LocalSendManager::handlePrepareUpload(int fd, const std::string &body,
   // (người dùng đã đồng ý ở dialog invite rồi, không hỏi lại)
   bool isSaveSync = !batch.empty();
   for (const auto &pp : batch) {
-    const std::string &rp = pp.file.relativePath;
-    bool isSave = !rp.empty() &&
-        (rp.rfind(".config/", 0) == 0 ||
-         rp.rfind("RetroArch/", 0) == 0 ||
-         rp.rfind("Emus/PPSSPP/", 0) == 0);
+    bool isSave = isSaveSyncMeta(pp.file);
     if (!isSave) { isSaveSync = false; break; }
   }
 
@@ -2209,12 +2209,9 @@ void LocalSendManager::approveUploadWithPath(const std::string &sessionId,
     } else {
       target = pp.savePath;
     }
-    // SaveSync: ghi đè file cũ (đồng bộ), không tạo bản sao (1)
-    bool isSave = !pp.file.relativePath.empty() &&
-        (pp.file.relativePath.rfind(".config/", 0) == 0 ||
-         pp.file.relativePath.rfind("RetroArch/", 0) == 0 ||
-         pp.file.relativePath.rfind("Emus/PPSSPP/", 0) == 0);
-    req.savedPath = isSave ? target : chooseAvailablePath(target);
+    // Luật của user (2026-10-22): KHÔNG bao giờ tạo hậu tố " (n)" —
+    // chép là chép đè thẳng vào đúng đường dẫn đích, kể cả transfer thường.
+    req.savedPath = target;
     reqs.push_back(std::move(req));
   }
 
@@ -2461,12 +2458,7 @@ std::string LocalSendManager::resolveTargetPath(const LsFileMeta &file) {
   // Tier 1: user-chosen target folder (highest priority)
   // NGOẠI LỆ: save sync (relativePath bắt đầu bằng .config/ hoặc RetroArch/)
   // thì dùng thẳng relativePath, bỏ qua target folder
-  bool isSaveSync = !file.relativePath.empty() &&
-      (file.relativePath.rfind(".config/", 0) == 0 ||
-       file.relativePath.rfind("RetroArch/", 0) == 0 ||
-       file.relativePath.rfind("Emus/PPSSPP/", 0) == 0 ||
-       file.relativePath == "ra" || file.relativePath.rfind("ra/", 0) == 0 ||
-       file.relativePath == "psp" || file.relativePath.rfind("psp/", 0) == 0);
+  bool isSaveSync = isSaveSyncMeta(file);
   {
     std::lock_guard<std::mutex> lock(m_targetMutex);
     if (!m_targetFolder.empty() && !isSaveSync) {
@@ -2500,8 +2492,20 @@ std::string LocalSendManager::resolveTargetPath(const LsFileMeta &file) {
   // Tier 3: fileName có '/' (sender encode path vào fileName)
   if (target.empty() && file.fileName.find('/') != std::string::npos) {
     std::string rel = normalizeRel(file.fileName, false);
-    if (!rel.empty())
-      target = "/mnt/SDCARD/" + rel;
+    if (!rel.empty()) {
+      // Path encode trong fileName: nếu là save canonical thì resolve về
+      // vị trí save vật lý của máy này, đừng dùng đường dẫn thô.
+      auto slash = rel.find_last_of('/');
+      std::string dirPart =
+          (slash == std::string::npos) ? "" : rel.substr(0, slash);
+      std::string canon = normalizeSaveRel(dirPart);
+      if (canon == "ra" || canon.rfind("ra/", 0) == 0 ||
+          canon == "psp" || canon.rfind("psp/", 0) == 0)
+        target = SaveSync::resolveLocalPath("/mnt/SDCARD", canon, base,
+                                            "", true);
+      if (target.empty())
+        target = "/mnt/SDCARD/" + rel;
+    }
   }
 
   // Tier 4: heuristic mapping

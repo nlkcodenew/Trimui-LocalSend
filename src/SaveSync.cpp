@@ -121,6 +121,26 @@ void scanDirRecursiveExt(const std::string& baseDir, const std::string& relDir,
   closedir(dir);
 }
 
+// Quét PHẲNG (không đệ quy): chỉ file nằm trực tiếp trong thư mục.
+template <typename Cb>
+void scanDirFlat(const std::string& baseDir, const std::string& relDir,
+                 const std::string& canonDir, Cb&& cb) {
+  std::string fullPath = joinPath(baseDir, relDir);
+  DIR* dir = opendir(fullPath.c_str());
+  if (!dir) return;
+  struct dirent* entry;
+  while ((entry = readdir(dir)) != nullptr) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+      continue;
+    std::string childFull = joinPath(fullPath, entry->d_name);
+    struct stat st;
+    if (stat(childFull.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) continue;
+    cb(canonDir, entry->d_name, childFull,
+       static_cast<uint64_t>(st.st_size), static_cast<int64_t>(st.st_mtime));
+  }
+  closedir(dir);
+}
+
 } // namespace
 
 SaveLayout detectSaveLayout() {
@@ -184,8 +204,10 @@ static void scanStock(const std::string& root, std::vector<SaveFileInfo>& out) {
   // PPSSPP chính: .config/ppsspp/PSP/{SAVEDATA,PPSSPP_STATE}
   scanDirRecursive(root, ".config/ppsspp/PSP/SAVEDATA", "psp/savedata", emit);
   scanDirRecursive(root, ".config/ppsspp/PSP/PPSSPP_STATE", "psp/state", emit);
-  // RetroArch battery saves (phẳng)
-  scanDirRecursive(root, "RetroArch/.retroarch/saves", "ra", emit);
+  // RetroArch battery saves: chỉ quét PHẲNG ở gốc saves. Thư mục con của
+  // core (mame/cfg, nvram...) là dữ liệu riêng của core, không dịch được
+  // sang layout OS khác và khiến diff không bao giờ hội tụ — bỏ qua.
+  scanDirFlat(root, "RetroArch/.retroarch/saves", "ra", emit);
   // PPSSPP portable: Emus/PPSSPP/<version>/.config/ppsspp/PSP/{...}
   // -> gộp vào cùng namespace canonical (ghi: ưu tiên nơi đã có file)
   std::string emuDir = joinPath(root, "Emus/PPSSPP");
@@ -215,7 +237,27 @@ static void scanKnulli(const std::string& root, std::vector<SaveFileInfo>& out) 
       info.system = system;
       out.push_back(info);
     };
-    scanDirRecursiveExt(root, "saves/" + sys, "ra", ".srm", sys, emit);
+    // Quét PHẲNG mọi đuôi file (không chỉ .srm): file phụ (.nv/.fs/.state)
+    // đã nhận về nằm phẳng trong saves/<sys> phải được liệt kê lại thì
+    // diff mới hội tụ; key canonical "ra" khớp phía stock quét phẳng.
+    {
+      std::string dir = joinPath(joinPath(root, "saves"), sys);
+      DIR* d = opendir(dir.c_str());
+      if (d) {
+        struct dirent* e;
+        while ((e = readdir(d)) != nullptr) {
+          if (e->d_name[0] == '.') continue;
+          std::string full = joinPath(dir, e->d_name);
+          struct stat st;
+          if (stat(full.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+            continue;
+          emit("ra", e->d_name, full, sys,
+               static_cast<uint64_t>(st.st_size),
+               static_cast<int64_t>(st.st_mtime));
+        }
+        closedir(d);
+      }
+    }
   }
   // PSP (PPSSPP): saves/psp/PSP/{SAVEDATA,PPSSPP_STATE} (+ SAVEDATA phụ)
   auto emitPsp = [&](const std::string& canonDir, const std::string& name,
