@@ -11,6 +11,13 @@ public:
   std::string getLocalSendAlias() const;
   void setLocalSendAlias(const std::string &alias);
   std::string getOrCreateLocalSendFingerprint();
+  // Danh tinh TLS cua thiet bi cho giao thuc LocalSend: cap cert/key
+  // tu ky luu ben trong data/. Fingerprint chuan cua giao thuc la
+  // SHA-256 (hex) cua cert dang DER — receiver chinh hang doi chieu
+  // fingerprint cong bo voi cert client trinh trong bat tay mTLS.
+  bool ensureDeviceIdentity();
+  std::string deviceCertPath() const;
+  std::string deviceKeyPath() const;
 
 private:
   AppConfig() = default;

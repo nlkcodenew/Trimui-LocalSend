@@ -2617,6 +2617,17 @@ void LocalSendManager::postProcessUpload(const LsUploadRequest &req) {
 // HTTP Client (sender side) - uses libcurl for HTTP and HTTPS support
 // =============================================================
 
+// Trinh chung thu client trong bat tay TLS: receiver LocalSend chinh
+// hang chay mTLS — cat ket noi neu client khong co cert, va doi chieu
+// SHA-256 cua cert voi fingerprint ta cong bo khi discovery.
+static void applyClientCert(CURL *curl) {
+  AppConfig &cfg = AppConfig::instance();
+  if (cfg.ensureDeviceIdentity()) {
+    curl_easy_setopt(curl, CURLOPT_SSLCERT, cfg.deviceCertPath().c_str());
+    curl_easy_setopt(curl, CURLOPT_SSLKEY, cfg.deviceKeyPath().c_str());
+  }
+}
+
 bool LocalSendManager::httpPostJson(const std::string &protocol,
                                     const std::string &ip, int port,
                                     const std::string &path,
@@ -2646,6 +2657,7 @@ bool LocalSendManager::httpPostJson(const std::string &protocol,
   // LocalSend uses self-signed TLS certificates
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+  applyClientCert(curl);
 
   respBody.clear();
   auto writeCb = [](char *ptr, size_t size, size_t nmemb, void *userdata) -> size_t {
@@ -2701,6 +2713,7 @@ bool LocalSendManager::httpGet(const std::string &protocol,
   curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+  applyClientCert(curl);
 
   respBody.clear();
   auto writeCb = [](char *ptr, size_t size, size_t nmemb, void *userdata) -> size_t {
@@ -2851,6 +2864,7 @@ bool LocalSendManager::httpPostBinary(const std::string &protocol,
   // LocalSend uses self-signed TLS certificates
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+  applyClientCert(curl);
 
   std::string resp;
   auto writeCb = [](char *ptr, size_t size, size_t nmemb, void *userdata) -> size_t {
