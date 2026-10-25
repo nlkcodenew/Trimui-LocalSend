@@ -285,7 +285,11 @@ InputState pollInput() {
       default: break;
       }
     }
-    if (event.type == SDL_JOYBUTTONDOWN) {
+    // Guard double-input: khi da co controller (mapping tu ES), bo qua nut
+    // joystick tho — neu khong, cung mot lan bam se toi app qua ca 2 duong
+    // (VD: X tren Brick: controller cho input.x nhung joystick 7 cho
+    // input.start, start xet sau nen ghi de thanh man Transfers).
+    if (event.type == SDL_JOYBUTTONDOWN && !controller) {
       switch (event.jbutton.button) {
       case 1: input.a = true; break;
       case 0: input.b = true; break;
@@ -295,7 +299,7 @@ InputState pollInput() {
       default: break;
       }
     }
-    if (event.type == SDL_JOYHATMOTION) {
+    if (event.type == SDL_JOYHATMOTION && !controller) {
       input.up = (event.jhat.value & SDL_HAT_UP) != 0;
       input.down = (event.jhat.value & SDL_HAT_DOWN) != 0;
       input.left = (event.jhat.value & SDL_HAT_LEFT) != 0;
@@ -778,6 +782,11 @@ bool init() {
   font = TTF_OpenFont(fontPath.c_str(), 25);
   fontSmall = TTF_OpenFont(fontPath.c_str(), 18);
   if (!font || !fontSmall) return false;
+  // Best-effort: nap bang dich tay cam do ES sinh (/tmp/gamecontrollerdb.txt).
+  // Khi chay tu Ports, ES da cap mapping qua moi truong; khi chay ngoai ES,
+  // file nay (neu con tu lan chay ES truoc) giup duong controller hoat dong
+  // thay vi roi ve joystick tho. Khong co file thi bo qua, khong sao.
+  SDL_GameControllerAddMappingsFromFile("/tmp/gamecontrollerdb.txt");
   for (int index = 0; index < SDL_NumJoysticks(); ++index) {
     if (SDL_IsGameController(index)) {
       controller = SDL_GameControllerOpen(index);
