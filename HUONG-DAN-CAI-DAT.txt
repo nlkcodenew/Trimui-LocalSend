@@ -1,0 +1,80 @@
+HƯỚNG DẪN CÀI ĐẶT TRIMUI-LOCALSEND
+(Chạy được cả stock OS và Knulli OS — Brick Pro, Smart Pro S, cùng một bản build)
+
+File ZIP duy nhất trong release chứa đủ mọi thứ cho cả hai hệ điều hành
+(thư mục Apps/ cho stock OS, thư mục system/ + roms/ cho Knulli OS, và
+file hướng dẫn này). Tùy máy đang chạy hệ điều hành nào mà làm theo
+phần A hoặc phần B dưới đây.
+
+================================================================
+PHẦN A — STOCK OS (hệ điều hành gốc của máy)
+================================================================
+1. Tải file ZIP của bản release về máy tính, giải nén ra sẽ được các
+   thư mục Apps/, system/, roms/ và file HUONG-DAN-CAI-DAT.txt.
+
+2. Chỉ cần thư mục Apps/Trimui-LocalSend/: chép nó vào thư mục Apps/
+   trên thẻ nhớ (bỏ qua system/, roms/ và file hướng dẫn — chúng
+   dành cho Knulli OS).
+   (Nếu giải nén thẳng ra gốc thẻ thì đã có sẵn Apps/Trimui-LocalSend/,
+   chỉ cần chép cả thư mục Apps/ ra thẻ.)
+
+3. Cắm thẻ vào máy, mở mục Apps trên máy, chọn Trimui-LocalSend.
+
+4. Lần gửi đầu tiên sang app LocalSend chính hãng trên PC: PC sẽ hiện hộp
+   thoại chấp nhận, bấm chấp nhận là gửi được. Muốn các lần sau tự động:
+   gắn sao thiết bị trong app PC và bật Quick save.
+
+Lưu ý (stock OS):
+- App tự tạo thư mục Download/LocalSend trên thẻ để chứa file nhận về,
+  và dùng thẻ làm gốc cho tính năng Save sync.
+- Cập nhật tự động, im lặng: mỗi lần mở app, app kiểm tra bản mới sau
+  30 giây rồi lặp lại mỗi 10 phút, tự áp dụng (log tại ota.log trong
+  thư mục app). Muốn tắt hẳn: đặt TRIMUI_LS_NO_OTA=1 trong custom.sh.
+
+================================================================
+PHẦN B — KNULLI OS
+================================================================
+Trên Knulli, app nằm ở mục Tools (không phải Ports). File ZIP đã
+chứa sẵn mọi thứ cho Knulli, không cần tải thêm file nào khác.
+
+1. Giải nén file ZIP ra máy tính, sẽ được các thư mục system/,
+   roms/ và file HUONG-DAN-CAI-DAT.txt (cùng thư mục Apps/ dành
+   cho stock OS — bỏ qua).
+
+2. Chép thư mục system/trimui-localsend/ vào /userdata/system/ trên
+   máy game (gộp/ghi đè — chỉ chép đè, không cần xóa thư mục cũ).
+   Cách chép: qua SFTP/SSH, hoặc tháo thẻ gắn vào máy tính rồi chép
+   vào phân vùng dữ liệu (thư mục system/ nằm ở gốc phân vùng đó).
+
+3. Chép file roms/tools/Trimui-LocalSend.sh vào /userdata/roms/tools/
+   trên máy game, rồi cấp quyền chạy (qua SSH):
+     chmod +x /userdata/roms/tools/Trimui-LocalSend.sh
+
+4. (Để hiện icon) Chép file roms/tools/images/trimui-localsend.png
+   vào /userdata/roms/tools/images/.
+
+5. Khởi động lại máy, mở EmulationStation, vào mục Tools rồi chọn
+   Trimui-LocalSend.
+
+Lưu ý (Knulli OS):
+- Launcher tự tạo liên kết /mnt/SDCARD trỏ sang /userdata nếu máy chưa
+  có (app cần đường dẫn này cho thư mục tải về và tính năng Save sync).
+- Cập nhật tự động, im lặng giống như trên stock OS (kiểm tra sau
+  30 giây rồi mỗi 10 phút, log tại ota.log). Tắt hẳn cũng bằng
+  TRIMUI_LS_NO_OTA=1 trong custom.sh.
+- Lần gửi đầu tiên sang app LocalSend chính hãng trên PC vẫn cần bấm
+  chấp nhận như phần A, hoặc gắn sao + bật Quick save để tự động.
+
+ĐÃ CÀI BẢN CŨ Ở PORTS, MUỐN CHUYỂN SANG TOOLS:
+- Chép file Trimui-LocalSend.sh từ /userdata/roms/ports/ sang
+  /userdata/roms/tools/ (xóa file cũ ở Ports sau khi chép).
+- Chép icon trimui-localsend.png từ /userdata/roms/ports/images/ sang
+  /userdata/roms/tools/images/.
+- Chuyển mục gamelist: dừng EmulationStation trước
+  (/etc/init.d/S31emulationstation stop), cắt khối <game> của
+  Trimui-LocalSend từ /userdata/roms/ports/gamelist.xml sang
+  /userdata/roms/tools/gamelist.xml (tạo file mới nếu chưa có), rồi
+  khởi động lại máy.
+- Lưu ý: cập nhật OTA chỉ cập nhật payload trong
+  /userdata/system/trimui-localsend/, không tự chuyển file launcher —
+  nên bước chuyển trên phải làm tay một lần.
